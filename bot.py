@@ -29,16 +29,27 @@ def main():
     data = receive_candles("AAPL")
     kinds = receive_kinds_of_candles("AAPL")
     print(kinds)
+### For live data we just use last three candles ([-1], [-2], [-3])
+### and in a while loop (while there is no new candle and there is some pattern)
+### calculate
     for i in range(0, len(data)-3):
         data_window = [data[i], data[i+1], data[i+2]]
-        if patterns.bullish_reversal_212(data_window):
-            print("FOUND possible BULLISH 2-1-2 pattern")
+        (entry, target, stop) = patterns.bullish_reversal_212(data_window)
+        if entry != -1:
+            print("FOUND BULLISH 2-1-2 pattern")
+            print("ENTRY: ", entry)
+            print("TARGET: ", target)
+            print("STOP: ", stop)
             print(data_window[0].to_string())
             print(data_window[1].to_string())
             print(data_window[2].to_string())
-
-        if patterns.bearish_reversal_212(data_window):
-            print("FOUND possible BEARISH 2-1-2 pattern")
+            
+        (entry, target, stop) = patterns.bearish_reversal_212(data_window)
+        if entry != -1:
+            print("FOUND BEARISH 2-1-2 pattern")
+            print("ENTRY: ", entry)
+            print("TARGET: ", target)
+            print("STOP: ", stop)
             print(data_window[0].to_string())
             print(data_window[1].to_string())
             print(data_window[2].to_string())
