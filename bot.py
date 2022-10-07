@@ -29,9 +29,7 @@ def main():
     data = receive_candles("AAPL")
     kinds = receive_kinds_of_candles("AAPL")
     print(kinds)
-### For live data we just use last three candles ([-1], [-2], [-3])
-### and in a while loop (while there is no new candle and there is some pattern)
-### calculate
+### For live data we just wait until new candle appears and then we check if there is a pattern
     for i in range(0, len(data)-3):
         data_window = [data[i], data[i+1], data[i+2]]
         (entry, target, stop) = patterns.bullish_reversal_212(data_window)
