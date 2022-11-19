@@ -20,10 +20,11 @@ def bearish_reversal_212(data):
         return (-1,-1,-1)
     if (data[0].get_kind() == "2" and data[0].get_direction() == "U") and (data[1].get_kind() == "1"):
         print("CANDIDATE bearish_reversal_212 ")
-        if data[2].open < data[1].high and data[2].get_direction() == "D":
+        if data[2].open < data[1].high and data[2].get_kind() != "3":
             entry = data[1].high
             target = data[0].high
             stop = data[1].low
+            # stop = (data[1].low + data[1].high)/2 # 50% rule instead of high of previous candle
             return (entry, target, stop)
     return (-1,-1,-1)
 
@@ -47,9 +48,10 @@ def bullish_reversal_212(data):
         return (-1,-1,-1)
     if (data[0].get_kind() == "2" and data[0].get_direction() == "D") and (data[1].get_kind() == "1"):
         print("CANDIDATE bullish_reversal_212 ")
-        if data[2].open > data[1].low and data[2].get_direction() == "U":
+        if data[2].open > data[1].low and data[2].get_kind() != "3":
             entry = data[1].high
             target = data[0].high
             stop = data[1].low
+            # stop = (data[1].low + data[1].high)/2 # 50% rule instead of low of previous candle
             return (entry, target, stop)
     return (-1,-1,-1)
