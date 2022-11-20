@@ -3,16 +3,11 @@ from td.client import TDClient
 import datetime
 import time
 import ticker
+import session
 
 # Create a new session, credentials path is required.
-TDSession = TDClient(
-    client_id='DLGHTG07LAMJSNLDPD0VGAHEZJZVTMYD',
-    redirect_uri='http://127.0.0.1',
-    credentials_path='/Users/ilya/Git/StratBot_Sema/td_state.json'
-)
+TDSession = session.initTDSession()
 
-# Login to the session
-TDSession.login()
 #price_history_service = TDSession.price_history()
 #quote_service = TDSession.quotes()
 
