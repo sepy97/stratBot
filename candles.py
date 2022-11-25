@@ -27,9 +27,23 @@ class Candle:
     def get_direction(self):
         # Return candle direction
         if self.open < self.close:
-            return "U"
+            return "G"
         else:
-            return "D"
+            return "R"
+
+    def get_subtype(self):
+        # TODO: description
+        if self.get_kind() == "2":
+            if self.high > self.previous_high:
+                return "U"
+            elif self.low < self.previous_low:
+                return "D"
+            else:
+                print ("Error: Candle is 2 but has no direction!")
+                return "E"
+        else:
+            return "X"
+
 
     def to_string(self):
         # Return candle as string

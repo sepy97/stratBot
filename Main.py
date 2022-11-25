@@ -1,5 +1,5 @@
 # Import the client
-from td.client import TDClient
+#from td.client import TDClient
 import datetime
 import time
 import ticker
@@ -25,5 +25,5 @@ TDSession = session.initTDSession()
 #endTime_stamp = int(datetime.datetime.strptime(endTime, "%d/%m/%Y").timestamp()*1000)
 #candle2 = TDSession.get_price_history(symbol="MSFT", period_type="year", start_date=startTime_stamp, end_date=endTime_stamp, frequency_type="monthly", frequency=1, extended_hours=False)
 
-t = ticker.Ticker("MSFT", TDSession)
+t = ticker.Ticker("QQQ", TDSession)
 print(t.to_string())
