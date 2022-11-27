@@ -19,7 +19,7 @@ class Updater:
         self.TDSession = TDSession
         self.symbols = symbols
         self.timezone = timezone="America/Los_Angeles"
-        self.sched = BackgroundScheduler(daemon=False, timezone=self.timezone, executors={'threadpool': ThreadPoolExecutor(10000)})
+        self.sched = BackgroundScheduler(daemon=False, timezone=self.timezone, executors={'threadpool': ThreadPoolExecutor(10000)}) # TODO parameterize 10000 into a (global?) variable
         self.exportSymbols()
 
 
