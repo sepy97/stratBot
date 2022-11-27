@@ -8,6 +8,7 @@ Here is a list of tasks that are in progress and ones that we will work on in th
 # Future tasks
 * Strategy based on strat patterns
 * Log target prices and stop-losses
+* More sophisticated way of checking when to insert a candle (currently used ms are not accurate, bcoz there might be 365 or 366 days in a year, 90 or 91 days in a quarter, 31 or 30 or 29 or 28 days in a month)
 * Update all tickers concurrently (using processes, not threads)
 * Save the watchlist into the JSON file
 * Go through all TODO
