@@ -10,7 +10,8 @@ class Candle:
         self.previous_low = prev_low
     
     def __str__(self):
-        return "Date: " + str(self.timestamp_ms) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close )
+        return "Date: " + str(self.date) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) 
+
     
     def get_kind(self):
         # Return candle kind, either 1, 2 or 3
@@ -43,8 +44,7 @@ class Candle:
                 return "E"
         else:
             return "X"
-
-
+        
     def to_string(self):
         # Return candle as string
         return self.get_kind() + self.get_direction()

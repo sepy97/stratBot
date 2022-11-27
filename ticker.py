@@ -1,6 +1,7 @@
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import candles 
+import util
 import patterns
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
@@ -92,7 +93,11 @@ class Ticker:
     def __getLast3Candles(self, timeframe=[]):
         # return array of 3x Candles of specified timeframe. 
         # Timeframe options: "y", "q", "m", "w", "d", "m60", "m30", "m15", "m5"
+        # If called outside of market hours, we don't need to specify end day since get_price_history returns candles including today
+        # If called during market hours, without specifying end date, the output excludes current day. Need to provide valid start and end day 
         currentDateTime = datetime.now()
+        currentTimeStamp_ms = int(1000*currentDateTime.timestamp())
+        previousDayTimeStamp_ms = int(1000*util.getPreviousTradingDay().timestamp())
         #relativedelta(months=n)
 
         #TODO: Get yearly candle
@@ -113,12 +118,16 @@ class Ticker:
         data = self.session.get_price_history(symbol=self.symbol, period_type="year", period=1, start_date=None, end_date=None, frequency_type="monthly", frequency=1, extended_hours=False)
         candle = data["candles"] 
         self.candles["q"] = self.get_quarter_candle_given_data(candle)
-        
+        print("Quarterly candles:")
+        for c in self.candles["q"]:
+            print(c)        
         # Get monthly candles
         data = self.session.get_price_history(symbol=self.symbol, period_type="year", period=1, start_date=None, end_date=None, frequency_type="monthly", frequency=1, extended_hours=False)
         candle = data["candles"]
         self.candles["m"] = self.get_candle_given_data(candle)
-        
+        print("Monthly candles:")
+        for c in self.candles["m"]:
+            print(c)        
         # Get weekly candle
         data = self.session.get_price_history(symbol=self.symbol, period_type="month", period=1, start_date=None, end_date=None, frequency_type="weekly", frequency=1, extended_hours=False)
         candle = data["candles"]
@@ -129,14 +138,17 @@ class Ticker:
         candle = data["candles"]
         self.candles["d"] = self.get_candle_given_data(candle)
         
+        # TODO: identify last 2 days worth of trading 
         # Get hourly candle. Somehow TD API does not support 60min candles natively, so we stitch 2x 30min candles 
         data = self.session.get_price_history(symbol=self.symbol, period_type="day", period=1, start_date=None, end_date=None, frequency_type="minute", frequency=30, extended_hours=False)
         candle = data["candles"]
         self.candles["m60"] = self.get_hour_candle_given_data(candle)
-                    
+        print("Hourly candles:")
+        for c in self.candles["m60"]:
+            print(c)
+            
         # Get 30min candle
-        data = self.session.get_price_history(symbol=self.symbol, period_type="day", period=1, start_date=None, end_date=None, frequency_type="minute", frequency=30, extended_hours=False)
-        candle = data["candles"]
+        # Will use candle data from previous API call 
         self.candles["m30"] = self.get_candle_given_data(candle)
         
         # Get 15min candle
