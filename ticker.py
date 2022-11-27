@@ -1,7 +1,10 @@
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import candles 
+import patterns
 
+# dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
+timeframe_LUT = {'y': (365*24*60*60*1000, "year", "yearly", 1), 'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
 class Ticker:
     # Ticker with history at multiple time frames
     def __init__(self, symbol, TDSession):
@@ -91,9 +94,20 @@ class Ticker:
         # Timeframe options: "y", "q", "m", "w", "d", "m60", "m30", "m15", "m5"
         currentDateTime = datetime.now()
         #relativedelta(months=n)
-        
+
         #TODO: Get yearly candle
         year = [currentDateTime.year - 2, currentDateTime.year - 1, currentDateTime.year]
+
+        # Should be universal for all timeframes:
+        #for t in self.candles.keys():
+        #    data = self.session.get_price_history(symbol = self.symbol, period_type = timeframe_LUT[t][1], period=1, start_date=None, end_date=None, frequency_type = timeframe_LUT[t][2], frequency = timeframe_LUT[t][3], extended_hours=False)
+        #    candle = data["candles"]
+        #    if (t == 'q'):
+        #        self.candles[t] = Ticker.get_quarter_candle_given_data(candle)
+        #    elif (t == 'm60'):
+        #        self.candles[t] = Ticker.get_hour_candle_given_data(candle)
+        #    else:
+        #       self.candles[t] = self.get_candle_given_data(candle)
 
         #Get quarterly candle
         data = self.session.get_price_history(symbol=self.symbol, period_type="year", period=1, start_date=None, end_date=None, frequency_type="monthly", frequency=1, extended_hours=False)
@@ -171,4 +185,59 @@ class Ticker:
             #result["datetime"] = candle2["datetime"]
             #result["open"] = candle2["open"]
             #result["close"] = candle1["close"]
-        #return result    
+        #return result 
+
+    def update(self):
+        # TODO: description
+        data = self.session.get_quotes([self.symbol])
+        print("Quote: ", data)
+
+        # update close prices (for live candles from the ticker) using the market price
+        self.updateClose(data["regularMarketLastPrice"])
+
+        # update (if necessary) high and low of live candles
+        self.updateHighLow(data["regularMarketLastPrice"])
+
+        # create new candles (if necessary; based on the current timeframe)
+        self.insertCandle(data["regularMarketLastPrice"], data["regularMarketTradeTimeInLong"])
+
+        # detect patterns (should be executed parallelly)
+        # TODO: strategy
+        (entry, target, stop) = patterns.bearish_reversal_212(self.candles["m5"])
+        if entry!=-1:
+            print("Bearish reversal 212 detected")
+            print("Entry: " + str(entry))
+            print("Target: " + str(target))
+            print("Stop: " + str(stop))
+        (entry, target, stop) = patterns.bullish_reversal_212(self.candles["m5"])
+        if entry!=-1:
+            print("Bullish reversal 212 detected")
+            print("Entry: " + str(entry))
+            print("Target: " + str(target))
+            print("Stop: " + str(stop))
+
+        self.lastUpdated = datetime.now()
+
+    def insertCandle (self, price, timestamp):
+        # Insert new candle into the candle list if necessary
+        for t in self.candles.keys():
+            if (price - self.candles[t]["datetime"]) > timeframe_LUT[t][0]:
+                prev_high = self.candles[t][-1].high
+                prev_low = self.candles[t][-1].low
+                newCandle = candles.Candle(timestamp, price, price, price, price, prev_high, prev_low)
+                self.candles[t].append(newCandle)
+                self.candles[t].pop(0) 
+
+    def updateClose(self, close_price):
+        # Update close prices of live candles
+        for t in self.candles.keys():
+            self.candles[t][-1]["close"] = close_price
+
+    def updateHighLow(self, price):
+        # Update high and low of live candles if necessary
+        for t in self.candles.keys():
+            if price > self.candles[t][-1]["high"]:
+                self.candles[t][-1]["high"] = price
+            if price < self.candles[t][-1]["low"]:
+                self.candles[t][-1]["low"] = price
+   
