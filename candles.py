@@ -1,7 +1,7 @@
 class Candle:
     # Financial candle
-    def __init__(self, date, open, high, low, close, prev_high, prev_low):
-        self.date = date
+    def __init__(self, timestamp_ms, open, high, low, close, prev_high, prev_low):
+        self.timestamp_ms = timestamp_ms    # timestamp in milliseconds
         self.open = open
         self.high = high
         self.low = low
@@ -11,6 +11,7 @@ class Candle:
     
     def __str__(self):
         return "Date: " + str(self.date) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) 
+
     
     def get_kind(self):
         # Return candle kind, either 1, 2 or 3
