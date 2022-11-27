@@ -4,6 +4,7 @@ import datetime
 import time
 import ticker
 import session
+import updater
 
 # Create a new session, credentials path is required.
 TDSession = session.initTDSession()
@@ -25,5 +26,16 @@ TDSession = session.initTDSession()
 #endTime_stamp = int(datetime.datetime.strptime(endTime, "%d/%m/%Y").timestamp()*1000)
 #candle2 = TDSession.get_price_history(symbol="MSFT", period_type="year", start_date=startTime_stamp, end_date=endTime_stamp, frequency_type="monthly", frequency=1, extended_hours=False)
 
-t = ticker.Ticker("QQQ", TDSession)
-print(t.to_string())
+#t = ticker.Ticker("QQQ", TDSession)
+#print(t.to_string())
+# INSTEAD:
+u = updater.Updater(TDSession, ["QQQ", "AAPL"])
+u.run()
+time.sleep(60)
+u.addSymbol("MSFT")
+time.sleep(60)
+u.stop()
+
+print("done")
+time.sleep(10)
+
