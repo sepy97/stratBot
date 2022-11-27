@@ -4,8 +4,6 @@ import candles
 import util
 import patterns
 
-# dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
-timeframe_LUT = {'y': (365*24*60*60*1000, "year", "yearly", 1), 'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
 class Ticker:
     # Ticker with history at multiple time frames
     def __init__(self, symbol, TDSession):
@@ -105,7 +103,7 @@ class Ticker:
 
         # Should be universal for all timeframes:
         #for t in self.candles.keys():
-        #    data = self.session.get_price_history(symbol = self.symbol, period_type = timeframe_LUT[t][1], period=1, start_date=None, end_date=None, frequency_type = timeframe_LUT[t][2], frequency = timeframe_LUT[t][3], extended_hours=False)
+        #    data = self.session.get_price_history(symbol = self.symbol, period_type = util.timeframe_LUT[t][1], period=1, start_date=None, end_date=None, frequency_type = util.timeframe_LUT[t][2], frequency = util.timeframe_LUT[t][3], extended_hours=False)
         #    candle = data["candles"]
         #    if (t == 'q'):
         #        self.candles[t] = Ticker.get_quarter_candle_given_data(candle)
@@ -233,7 +231,7 @@ class Ticker:
     def insertCandle (self, price, timestamp):
         # Insert new candle into the candle list if necessary
         for t in self.candles.keys():
-            if (timestamp - self.candles[t][-1].timestamp_ms) > timeframe_LUT[t][0]:
+            if (timestamp - self.candles[t][-1].timestamp_ms) > util.timeframe_LUT[t][0]:
                 prev_high = self.candles[t][-1].high
                 prev_low = self.candles[t][-1].low
                 newCandle = candles.Candle(timestamp, price, price, price, price, prev_high, prev_low)
