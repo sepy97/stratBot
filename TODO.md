@@ -15,3 +15,4 @@ Here is a list of tasks that are in progress and ones that we will work on in th
 * Finish all descriptions
 * Web app (or better just implement telegram bot?)
 * Deploy the app (Digital Ocean? Amazon?)
+* When detecting patterns - invalidate patterns that include candles from after close of short trading days 
