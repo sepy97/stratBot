@@ -233,16 +233,20 @@ class Ticker:
         # TODO: strategy
         (entry, target, stop) = patterns.bearish_reversal_212(self.candles["m5"])
         if entry!=-1:
-            print("Bearish reversal 212 detected")
-            print("Entry: " + str(entry))
-            print("Target: " + str(target))
-            print("Stop: " + str(stop))
+            util.strat_logger.logger.info(self.symbol + ": Bearish reversal 212 detected")
+            util.strat_logger.logger.info("Entry: " + str(entry))
+            util.strat_logger.logger.info("Target: " + str(target))
+            util.strat_logger.logger.info("Stop: " + str(stop))
+        else:
+            util.strat_logger.logger.info(self.symbol + ": No pattern detected")
         (entry, target, stop) = patterns.bullish_reversal_212(self.candles["m5"])
         if entry!=-1:
-            print("Bullish reversal 212 detected")
-            print("Entry: " + str(entry))
-            print("Target: " + str(target))
-            print("Stop: " + str(stop))
+            util.strat_logger.logger.info(self.symbol + ": Bullish reversal 212 detected")
+            util.strat_logger.logger.info("Entry: " + str(entry))
+            util.strat_logger.logger.info("Target: " + str(target))
+            util.strat_logger.logger.info("Stop: " + str(stop))
+        else:
+            util.strat_logger.logger.info(self.symbol + ": No pattern detected")
 
         self.lastUpdated = datetime.now()
 
