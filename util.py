@@ -100,8 +100,11 @@ def getCandleChange_ms(timestamp_ms, timeframe):
     
     timestampDate = datetime.fromtimestamp(timestamp_ms/1000)
     nyse = mcal.get_calendar('NYSE')
+    schedule = nyse.schedule(start_date=str(timestampDate), end_date=str(timestampDate))
     candleEndTimeStamp_ms = None
     nextCandleStartTimeStamp_ms = {}
+    if (schedule.empty) or (timestamp_ms < 1000*schedule.iloc[-1]['market_open'].timestamp()):  # not trading day or before market open 
+        timestampDate = timestampDate - timedelta(days=1)
     # yearly 
     # TODO
     
@@ -109,35 +112,48 @@ def getCandleChange_ms(timestamp_ms, timeframe):
     if timeframe=="q":
         quarterEndMonth = 3*((timestampDate.month-1)//3+1)
         periodEndDate = (timestampDate.replace(month=quarterEndMonth, day=1) + timedelta(days=32)).replace(day=1, hour=23, minute=59, second=59, microsecond=0) - timedelta(days=1)
-        schedule = nyse.schedule(start_date=str(timestampDate), end_date=str(periodEndDate))
+        scheduleStartDate = periodEndDate - timedelta(days=7)
+        schedule = nyse.schedule(start_date=str(scheduleStartDate), end_date=str(periodEndDate))
         candleEndTimeStamp_ms = int(1000*(schedule.iloc[-1]['market_close']-timedelta(seconds=1)).timestamp())
         #nextQuarterEndMonth = quarterEndMonth + 3 - 12*(quarterEndMonth//12)
-        schedule = nyse.schedule(start_date=str(periodEndDate+timedelta(days=1)), end_date=str(periodEndDate+timedelta(days=7)))  
+        schedule = nyse.schedule(start_date=str(schedule.iloc[-1]['market_close']+timedelta(days=1)), end_date=str(schedule.iloc[-1]['market_close']+timedelta(days=7)))  
         nextCandleStartTimeStamp_ms = int(1000*schedule.iloc[0]['market_open'].timestamp())    
     # monthly 
     if timeframe=="m":
         periodEndDate = (timestampDate.replace(day=1) + timedelta(days=32)).replace(day=1, hour=23, minute=59, second=59, microsecond=0) - timedelta(days=1)
-        schedule = nyse.schedule(start_date=str(timestampDate), end_date=str(periodEndDate))
+        scheduleStartDate = periodEndDate - timedelta(days=7)
+        schedule = nyse.schedule(start_date=str(scheduleStartDate), end_date=str(periodEndDate))
+        #index = -1
+        #if timestamp_ms < schedule.iloc[-1]['market_open'].timestamp(): # timestamp_ms is before market open so schedule contains the extra day
+        #    index = -2        
+        #periodEndDate = schedule.iloc[-1]['market_close'] # update end of period by accounting for possible timestamp on trading day before market open
+        #candleEndTimeStamp_ms = int(1000*(periodEndDate-timedelta(seconds=1)).timestamp())
         candleEndTimeStamp_ms = int(1000*(schedule.iloc[-1]['market_close']-timedelta(seconds=1)).timestamp())
-        schedule = nyse.schedule(start_date=str(periodEndDate+timedelta(days=1)), end_date=str(periodEndDate+timedelta(days=7)))
+        schedule = nyse.schedule(start_date=str(schedule.iloc[-1]['market_close']+timedelta(days=1)), end_date=str(schedule.iloc[-1]['market_close']+timedelta(days=7)))  
         nextCandleStartTimeStamp_ms = int(1000*schedule.iloc[0]['market_open'].timestamp())    
     # weekly
     if timeframe=="w":
         weekEndDate = timestampDate - timedelta(timestampDate.weekday()) + timedelta(days=6)
         periodEndDate = weekEndDate.replace(hour=23, minute=59, second=59, microsecond=0)
-        schedule = nyse.schedule(start_date=str(timestampDate), end_date=str(periodEndDate))
+        scheduleStartDate = periodEndDate - timedelta(days=7)
+        schedule = nyse.schedule(start_date=str(scheduleStartDate), end_date=str(periodEndDate))
+        #index = -1
+        #if timestamp_ms < schedule.iloc[-1]['market_open'].timestamp(): # timestamp_ms is before market open so schedule contains the extra day
+        #    index = -2
+        #periodEndDate = schedule.iloc[index]['market_close'] # update end of period by accounting for possible timestamp on trading day before market open
         candleEndTimeStamp_ms = int(1000*(schedule.iloc[-1]['market_close']-timedelta(seconds=1)).timestamp())
-        schedule = nyse.schedule(start_date=str(periodEndDate+timedelta(days=1)), end_date=str(periodEndDate+timedelta(days=7)))
+        schedule = nyse.schedule(start_date=str(schedule.iloc[-1]['market_close']+timedelta(days=1)), end_date=str(schedule.iloc[-1]['market_close']+timedelta(days=7)))  
         nextCandleStartTimeStamp_ms = int(1000*schedule.iloc[0]['market_open'].timestamp()) 
     # daily
     if timeframe=="d":
         schedule = nyse.schedule(start_date=str(timestampDate-timedelta(days=7)), end_date=str(timestampDate))
-        index = -1
-        if timestamp_ms < schedule.iloc[-1]['market_open'].timestamp(): # timestamp_ms is before market open so schedule contains the extra day
-            index = -2
-        candleEndTimeStamp_ms = int(1000*(schedule.iloc[index]['market_close']-timedelta(seconds=1)).timestamp())        
-        periodEndDate = datetime.fromtimestamp(candleEndTimeStamp_ms/1000)
-        schedule = nyse.schedule(start_date=str(periodEndDate+timedelta(days=1)), end_date=str(periodEndDate+timedelta(days=7)))
+        #index = -1
+        #if timestamp_ms < schedule.iloc[-1]['market_open'].timestamp(): # timestamp_ms is before market open so schedule contains the extra day
+        #    index = -2
+        #periodEndDate = schedule.iloc[index]['market_close'] # update end of period by accounting for possible timestamp on trading day before market open
+        candleEndTimeStamp_ms = int(1000*(schedule.iloc[-1]['market_close']-timedelta(seconds=1)).timestamp())        
+        #periodEndDate = datetime.fromtimestamp(candleEndTimeStamp_ms/1000)
+        schedule = nyse.schedule(start_date=str(schedule.iloc[-1]['market_close']+timedelta(days=1)), end_date=str(schedule.iloc[-1]['market_open']+timedelta(days=7)))
         nextCandleStartTimeStamp_ms = int(1000*schedule.iloc[0]['market_open'].timestamp()) 
     # intraday 
     if (timeframe=="m60") or (timeframe=="m30") or (timeframe=="m15") or (timeframe=="m5"):
@@ -146,6 +162,7 @@ def getCandleChange_ms(timestamp_ms, timeframe):
         #     identify end of hour containing timestamp 
         #     if end of hour is outside market hours - replace with market close 
         # if timestamp is between xx:00:00 and xx:29:59 then hour close is xx:30:00; otherwise the candle close is (xx+1):30:00
+        timestampDate = datetime.fromtimestamp(timestamp_ms/1000)
         openCloseAtDay = getOpenCloseAtDay(timestamp_ms)
         if (openCloseAtDay["open"] == 0) or (timestamp_ms < openCloseAtDay["open"]) or (timestamp_ms >= openCloseAtDay["close"]): #timestamp_ms is not on trading day or outside of market hours 
             schedule = nyse.schedule(start_date=str(timestampDate-timedelta(days=7)), end_date=str(timestampDate))
