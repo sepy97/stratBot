@@ -12,6 +12,13 @@ class Ticker:
         self.candles = {}
         self.__getLast3Candles()
         self.lastUpdated = datetime.now()
+        self.thisCandleClose = {}
+        self.nextCandleOpen = {}
+        for t in self.candles.keys():
+            (thisClose, nextOpen) = util.getCandleChange_ms(1000*self.lastUpdated.timestamp(), t)
+            self.thisCandleClose[t] = thisClose
+            self.nextCandleOpen[t] = nextOpen
+            
     
     def __str__(self):
         return self.symbol + ":"
@@ -249,23 +256,27 @@ class Ticker:
     def insertCandle (self, price, timestamp):
         # Insert new candle into the candle list if necessary
         for t in self.candles.keys():
-            if (timestamp - self.candles[t][-1].timestamp_ms) > util.timeframe_LUT[t][0]:
-                prev_high = self.candles[t][-1].high
-                prev_low = self.candles[t][-1].low
+            if timestamp >= self.nextCandleOpen[t]:
+                (thisClose, nextOpen) = util.getCandleChange_ms(timestamp, t)
+                #if (timestamp - self.candles[t][-1].timestamp_ms) > util.timeframe_LUT[t][0]:
+                prev_high = self.candles[t][0].high
+                prev_low = self.candles[t][0].low
                 newCandle = candles.Candle(timestamp, price, price, price, price, prev_high, prev_low)
-                self.candles[t].append(newCandle)
-                self.candles[t].pop(0) 
+                self.candles[t].insert(newCandle)
+                self.candles[t].pop() 
+                self.thisCandleClose[t] = thisClose
+                self.nextCandleOpen[t] = nextOpen
 
     def updateClose(self, close_price):
         # Update close prices of live candles
         for t in self.candles.keys():
-            self.candles[t][-1].close = close_price
+            self.candles[t][0].close = close_price
 
     def updateHighLow(self, price):
         # Update high and low of live candles if necessary
         for t in self.candles.keys():
             if price > self.candles[t][-1].high:
-                self.candles[t][-1].high = price
+                self.candles[t][0].high = price
             if price < self.candles[t][-1].low:
-                self.candles[t][-1].low = price
+                self.candles[t][0].low = price
    
