@@ -11,20 +11,8 @@ import pandas_market_calendars as mcal
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
-import logging
-
-class strat_logger:
-    def __init__(self, name, log_file='strat.log'):
-        self.logger = logging.getLogger(name)
-        self.logger.setLevel(logging.DEBUG)
-        # create a file handler
-        handler = logging.FileHandler(log_file)
-        handler.setLevel(logging.DEBUG)
-        # create a logging format
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        # add the handlers to the logger
-        self.logger.addHandler(handler)
+import tomlkit
+from pathlib import Path
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT
@@ -59,15 +47,15 @@ def getStartOf3Candles(endTime_ms, timeframe):
     if (timeframe == "q"):
         quarterEndMonth = 3*((endTime.month-1)//3+1)
         startTime = endTime.replace(year=endTime.year-1, month=quarterEndMonth)
-        startTime = (startTime + timedelta(days=32)).replace(day=1) #first day of period of time exactly a year before the end of quarter 
+        startTime = (startTime + timedelta(days=32)).replace(day=1) #first day of period of time exactly a year before the end of quarter
     if (timeframe == "m"):
         currentMonth = endTime.month
         if currentMonth > 3:
-            startTime = endTime.replace(month=currentMonth-3, day=1) 
+            startTime = endTime.replace(month=currentMonth-3, day=1)
         else:
-            startTime = endTime.replace(year=endTime.year-1, month=currentMonth+12-3, day=1)       
+            startTime = endTime.replace(year=endTime.year-1, month=currentMonth+12-3, day=1)
     if (timeframe == "w") or (timeframe == "d"):
-        startTime = endTime - timedelta(days=32)        
+        startTime = endTime - timedelta(days=32)
     if (timeframe == "m60") or (timeframe == "m30") or (timeframe == "m15") or (timeframe == "m5"): #TODO: clean up to reduce the amount of data to last trading day only
         nyse = mcal.get_calendar('NYSE')
         prevDay = getPreviousTradingDay(endTime)
@@ -110,12 +98,12 @@ def getCandleChange_ms(timestamp_ms, timeframe):
     #        Close of candle is (initially) t_open + (k+1)*p
     #        If close of candle outside of trading hours then return market close minus 1sec
 
-    # Implementation details: 
-    #     If timestamp is during trading day before market open, market scheduler includes that day - needs to be removed manually 
-    #     Assume that there is at least one trading day over 7 day period (used in large timeframes) 
-    #     For large time frames (D and larger): detect end of calendar period (year, quarter, month, week, day) containing timestamp, then get daily schedule for the last 7 days 
+    # Implementation details:
+    #     If timestamp is during trading day before market open, market scheduler includes that day - needs to be removed manually
+    #     Assume that there is at least one trading day over 7 day period (used in large timeframes)
+    #     For large time frames (D and larger): detect end of calendar period (year, quarter, month, week, day) containing timestamp, then get daily schedule for the last 7 days
     #     For instraday - find timestamps and compare against open and close time of the day
-    
+
     timestampDate = datetime.fromtimestamp(timestamp_ms/1000)
     nyse = mcal.get_calendar('NYSE')
     schedule = nyse.schedule(start_date=str(timestampDate), end_date=str(timestampDate))
@@ -125,7 +113,7 @@ def getCandleChange_ms(timestamp_ms, timeframe):
     if (not schedule.empty) and (timestamp_ms < 1000*schedule.iloc[-1]['market_open'].timestamp()):  # before market open on a trading day - ignore this day
         timestampDate = timestampDate - timedelta(days=1)
 
-    # intraday 
+    # intraday
     if (timeframe=="m60") or (timeframe=="m30") or (timeframe=="m15") or (timeframe=="m5"):
         if (not schedule.empty) and (timestamp_ms >= 1000*schedule.iloc[-1]['market_open'].timestamp()) and (timestamp_ms < 1000*schedule.iloc[-1]['market_close'].timestamp()):  #timestamp_ms is inside trading hours
             period = timeframe_LUT[timeframe][0]
@@ -141,9 +129,9 @@ def getCandleChange_ms(timestamp_ms, timeframe):
             else:
                 nextCandleStartTimeStamp_ms = candleEndTimeStamp_ms + 1000
             return candleEndTimeStamp_ms, nextCandleStartTimeStamp_ms
-        
-        else:      #timestamp_ms is outside of market hours 
-            periodEndDate = timestampDate         
+
+        else:      #timestamp_ms is outside of market hours
+            periodEndDate = timestampDate
 
     # yearly 
     if timeframe=="y":
@@ -151,10 +139,10 @@ def getCandleChange_ms(timestamp_ms, timeframe):
     # quarterly
     if timeframe=="q":
         quarterEndMonth = 3*((timestampDate.month-1)//3+1)
-        periodEndDate = (timestampDate.replace(month=quarterEndMonth, day=1) + timedelta(days=32)).replace(day=1, hour=23, minute=59, second=59, microsecond=0) - timedelta(days=1)   
+        periodEndDate = (timestampDate.replace(month=quarterEndMonth, day=1) + timedelta(days=32)).replace(day=1, hour=23, minute=59, second=59, microsecond=0) - timedelta(days=1)
     # monthly 
     if timeframe=="m":
-        periodEndDate = (timestampDate.replace(day=1) + timedelta(days=32)).replace(day=1, hour=23, minute=59, second=59, microsecond=0) - timedelta(days=1)   
+        periodEndDate = (timestampDate.replace(day=1) + timedelta(days=32)).replace(day=1, hour=23, minute=59, second=59, microsecond=0) - timedelta(days=1)
     # weekly
     if timeframe=="w":
         weekEndDate = timestampDate - timedelta(timestampDate.weekday()) + timedelta(days=6)
@@ -162,12 +150,10 @@ def getCandleChange_ms(timestamp_ms, timeframe):
     # daily
     if timeframe=="d":
         periodEndDate = timestampDate
-        
+
     periodStartDate = periodEndDate - timedelta(days=7)
     schedule = nyse.schedule(start_date=str(periodStartDate), end_date=str(periodEndDate))
     candleEndTimeStamp_ms = int(1000*(schedule.iloc[-1]['market_close']-timedelta(seconds=1)).timestamp())
-    scheduleNextPeriod = nyse.schedule(start_date=str(schedule.iloc[-1]['market_close']+timedelta(days=1)), end_date=str(schedule.iloc[-1]['market_close']+timedelta(days=7)))  
-    nextCandleStartTimeStamp_ms = int(1000*scheduleNextPeriod.iloc[0]['market_open'].timestamp())       
+    scheduleNextPeriod = nyse.schedule(start_date=str(schedule.iloc[-1]['market_close']+timedelta(days=1)), end_date=str(schedule.iloc[-1]['market_close']+timedelta(days=7)))
+    nextCandleStartTimeStamp_ms = int(1000*scheduleNextPeriod.iloc[0]['market_open'].timestamp())
     return candleEndTimeStamp_ms, nextCandleStartTimeStamp_ms
-
-    

@@ -34,10 +34,8 @@ TDSession = session.initTDSession()
 #t = ticker.Ticker("QQQ", TDSession)
 #print(t.to_string())
 # INSTEAD:
-u = updater.Updater(TDSession, ["QQQ", "AAPL"])
+u = updater.Updater(TDSession)
 u.run()
-time.sleep(60)
-u.addSymbol("MSFT")
 time.sleep(60)
 u.stop()
 

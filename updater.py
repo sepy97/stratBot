@@ -5,6 +5,7 @@ from apscheduler.triggers.combining import AndTrigger, OrTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 import ticker
+import util
 import session
 import tzlocal
 import datetime
@@ -12,12 +13,12 @@ import threading
 
 # TODO: create class for this with watchlist of tickers, scheduler
 class Updater:
-    def __init__(self, TDSession, symbols):
+    def __init__(self, TDSession):
         # TODO: description
         # TDSession is a TD Ameritrade session initiated beforehand (credentials necessary)
         # symbol is a string of the ticker symbol
         self.TDSession = TDSession
-        self.symbols = symbols
+        self.symbols = util.loadSymbols()
         self.timezone = timezone="America/Los_Angeles"
         self.sched = BackgroundScheduler(daemon=False, timezone=self.timezone, executors={'threadpool': ThreadPoolExecutor(10000)}) # TODO parameterize 10000 into a (global?) variable
         self.exportSymbols()
