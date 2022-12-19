@@ -12,6 +12,7 @@ class Ticker:
         self.candles = {}
         self.__getLast3Candles()
         self.lastUpdated = datetime.now()
+        self.logger = util.strat_logger("Ticker_"+self.symbol)
     
     def __str__(self):
         return self.symbol + ":"
@@ -217,59 +218,82 @@ class Ticker:
 
     def update(self):
         # TODO: description
+        self.logger.logger.debug("The beginning of an update call: " + str(self))
         data = self.session.get_quotes([self.symbol])
         print("Quote: ", data)
 
         # update close prices (for live candles from the ticker) using the market price
+        self.logger.logger.debug("Updating close prices")
         self.updateClose(data[self.symbol]["regularMarketLastPrice"])
 
         # update (if necessary) high and low of live candles
+        self.logger.logger.debug("Updating high and low prices")
         self.updateHighLow(data[self.symbol]["regularMarketLastPrice"])
 
         # create new candles (if necessary; based on the current timeframe)
+        self.logger.logger.debug("Inserting new candles")
         self.insertCandle(data[self.symbol]["regularMarketLastPrice"], data[self.symbol]["regularMarketTradeTimeInLong"])
 
-        # detect patterns (should be executed parallelly)
+        # detect patterns (should be executed in parallel)
         # TODO: strategy
+        self.logger.logger.debug("Calling bearish_reversal_212 pattern detection function")
         (entry, target, stop) = patterns.bearish_reversal_212(self.candles["m5"])
         if entry!=-1:
-            util.strat_logger.logger.info(self.symbol + ": Bearish reversal 212 detected")
-            util.strat_logger.logger.info("Entry: " + str(entry))
-            util.strat_logger.logger.info("Target: " + str(target))
-            util.strat_logger.logger.info("Stop: " + str(stop))
+            self.logger.logger.info("Bearish reversal 212 detected")
+            self.logger.logger.info("Entry: " + str(entry))
+            self.logger.logger.info("Target: " + str(target))
+            self.logger.logger.info("Stop: " + str(stop))
         else:
-            util.strat_logger.logger.info(self.symbol + ": No pattern detected")
+            self.logger.logger.info("Bearish reversal 212 not detected")
+
+        self.logger.logger.debug("Calling bullish_reversal_212 pattern detection function")
         (entry, target, stop) = patterns.bullish_reversal_212(self.candles["m5"])
         if entry!=-1:
-            util.strat_logger.logger.info(self.symbol + ": Bullish reversal 212 detected")
-            util.strat_logger.logger.info("Entry: " + str(entry))
-            util.strat_logger.logger.info("Target: " + str(target))
-            util.strat_logger.logger.info("Stop: " + str(stop))
+            self.logger.logger.info("Bullish reversal 212 detected")
+            self.logger.logger.info("Entry: " + str(entry))
+            self.logger.logger.info("Target: " + str(target))
+            self.logger.logger.info("Stop: " + str(stop))
         else:
-            util.strat_logger.logger.info(self.symbol + ": No pattern detected")
+            self.logger.logger.info("Bullish reversal 212 not detected")
 
         self.lastUpdated = datetime.now()
+        self.logger.logger.debug("The end of an update call: " + str(self))
 
     def insertCandle (self, price, timestamp):
         # Insert new candle into the candle list if necessary
+        candles_before_insertion = "Candles before insertion: "
+        candles_after_insertion = "Candles after insertion: "
         for t in self.candles.keys():
+            candles_before_insertion += str(t) + ": "
+            for c in self.candles[t]:
+                candles_before_insertion += str(c) + " "
             if (timestamp - self.candles[t][-1].timestamp_ms) > util.timeframe_LUT[t][0]:
                 prev_high = self.candles[t][-1].high
                 prev_low = self.candles[t][-1].low
                 newCandle = candles.Candle(timestamp, price, price, price, price, prev_high, prev_low)
                 self.candles[t].append(newCandle)
-                self.candles[t].pop(0) 
+                self.candles[t].pop(0)
+            candles_after_insertion += str(t) + ": "
+            for c in self.candles[t]:
+                candles_after_insertion += str(c) + " "
+        self.logger.logger.debug(candles_before_insertion)
+        self.logger.logger.debug(candles_after_insertion)
 
     def updateClose(self, close_price):
         # Update close prices of live candles
+        debug_string = "Updating close prices; Close price: " + str(close_price) + " Close of candles: "
         for t in self.candles.keys():
+            debug_string += str(t) + ": " + str(self.candles[t][-1].close) + " "
             self.candles[t][-1].close = close_price
+        self.logger.logger.debug(debug_string)
 
     def updateHighLow(self, price):
         # Update high and low of live candles if necessary
+        debug_string = "Updating high and low prices; Current price: " + str(price) + " High and low of candles: "
         for t in self.candles.keys():
+            debug_string += str(t) + ": " + str(self.candles[t][-1].high) + " " + str(self.candles[t][-1].low) + " "
             if price > self.candles[t][-1].high:
                 self.candles[t][-1].high = price
             if price < self.candles[t][-1].low:
                 self.candles[t][-1].low = price
-   
+        self.logger.logger.debug(debug_string)

@@ -6,14 +6,13 @@ import ticker
 import session
 import updater
 import util
+import os
 
 # Create a new session, credentials path is required.
 TDSession = session.initTDSession()
 
-util.strat_logger.logger.info("Starting Updater")
-util.strat_logger.handler.setFormatter (util.strat_logger.formatter)
-util.strat_logger.logger.addHandler (util.strat_logger.handler)
-util.strat_logger.logger.setLevel (util.logging.DEBUG)
+# Temporary thing, just for testing
+#os.remove("strat.log")
 
 #price_history_service = TDSession.price_history()
 #quote_service = TDSession.quotes()
