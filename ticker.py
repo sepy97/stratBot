@@ -6,6 +6,9 @@ import patterns
 
 class Ticker:
     # Ticker with history at multiple time frames
+    # candles is dictionary of 3-candles for each time frame as 
+    #   {timeframe: [array of Candles]}
+    # array of candles is sorted in time, with the first element being most recent (live) candle 
     def __init__(self, symbol, TDSession):
         self.symbol = symbol
         self.session = TDSession        
@@ -18,7 +21,7 @@ class Ticker:
             (thisClose, nextOpen) = util.getCandleChange_ms(1000*self.lastUpdated.timestamp(), t)
             self.thisCandleClose[t] = thisClose
             self.nextCandleOpen[t] = nextOpen
-            
+        self.debug_print()
     
     def __str__(self):
         return self.symbol + ":"
@@ -37,7 +40,17 @@ class Ticker:
     def to_string(self):
         # Return symbol name, TFC
         return self.symbol + ":" + str(self.getTFC())
-    
+
+    def debug_print(self):
+        print("Symbol: " + str(self.symbol))
+        for t in self.candles.keys():
+            print("Timeframe: " + t)
+            for c in self.candles[t]:
+                print(c)
+            print("Current candle closes: " + str(datetime.fromtimestamp(self.thisCandleClose[t]/1000)))
+            print("Next candle opens: " + str(datetime.fromtimestamp(self.nextCandleOpen[t]/1000)))
+        
+        
     @staticmethod
     def get_candle_given_data(data):
         # Return array of 3x Candles given data from TD API
@@ -101,17 +114,19 @@ class Ticker:
         # If called outside of market hours, we don't need to specify end day since get_price_history returns candles including today
         # If called during market hours, without specifying end date, the output excludes current day. Need to provide valid start and end day 
         # This will populate intraday candles incorrectly for days with short trading hours because TD reports them as regular hours anyway  
+        # TODO: unnecessary if fork - market open condition should work either way
         currentDateTime = datetime.now()
         currentTimeStamp_ms = int(1000*currentDateTime.timestamp())
         #previousDayTimeStamp_ms = int(1000*util.getPreviousTradingDay().timestamp())
         #relativedelta(months=n)
-        isMarketOpen = util.isMarketOpen(currentTimeStamp_ms)
+        #isMarketOpen = util.isMarketOpen(currentTimeStamp_ms)
+        isMarketOpen = True
         if isMarketOpen:
             Period    = None 
             endDate   = currentTimeStamp_ms
             startDate = {}
             for t in util.timeframe_LUT.keys():
-                startDate[t] = util.getStartOf3Candles(t, endDate)
+                startDate[t] = util.getStartOf3Candles(endDate, t)
 
         else:
             Period    = 1  
@@ -139,17 +154,17 @@ class Ticker:
         data = self.session.get_price_history(symbol=self.symbol, period_type="year", period=Period, start_date=startDate["q"], end_date=endDate, frequency_type="monthly", frequency=1, extended_hours=False)
         candle = data["candles"] 
         self.candles["q"] = self.get_quarter_candle_given_data(candle)
-        print("Quarterly candles:")
-        for c in self.candles["q"]:
-            print(c)        
+        #print("Quarterly candles:")
+        #for c in self.candles["q"]:
+        #    print(c)        
         # Get monthly candles
         # Will use candle data from previous API call
         #data = self.session.get_price_history(symbol=self.symbol, period_type="year", period=1, start_date=None, end_date=None, frequency_type="monthly", frequency=1, extended_hours=False)
         #candle = data["candles"]
         self.candles["m"] = self.get_candle_given_data(candle)
-        print("Monthly candles:")
-        for c in self.candles["m"]:
-            print(c)        
+        #print("Monthly candles:")
+        #for c in self.candles["m"]:
+        #    print(c)        
         # Get weekly candle
         data = self.session.get_price_history(symbol=self.symbol, period_type="month", period=Period, start_date=startDate["w"], end_date=endDate, frequency_type="weekly", frequency=1, extended_hours=False)
         candle = data["candles"]
@@ -164,9 +179,9 @@ class Ticker:
         data = self.session.get_price_history(symbol=self.symbol, period_type="day", period=Period, start_date=startDate["m60"], end_date=endDate, frequency_type="minute", frequency=30, extended_hours=False)
         candle = data["candles"]
         self.candles["m60"] = self.get_hour_candle_given_data(candle)
-        print("Hourly candles:")
-        for c in self.candles["m60"]:
-            print(c)
+        #print("Hourly candles:")
+        #for c in self.candles["m60"]:
+        #    print(c)
             
         # Get 30min candle
         # Will use candle data from previous API call 
@@ -225,7 +240,7 @@ class Ticker:
     def update(self):
         # TODO: description
         data = self.session.get_quotes([self.symbol])
-        print("Quote: ", data)
+        #print("Quote: ", data)
 
         # update close prices (for live candles from the ticker) using the market price
         self.updateClose(data[self.symbol]["regularMarketLastPrice"])
@@ -239,17 +254,17 @@ class Ticker:
         # detect patterns (should be executed parallelly)
         # TODO: strategy
         (entry, target, stop) = patterns.bearish_reversal_212(self.candles["m5"])
-        if entry!=-1:
-            print("Bearish reversal 212 detected")
-            print("Entry: " + str(entry))
-            print("Target: " + str(target))
-            print("Stop: " + str(stop))
+        #if entry!=-1:
+        #    print("Bearish reversal 212 detected")
+        #    print("Entry: " + str(entry))
+        #    print("Target: " + str(target))
+        #    print("Stop: " + str(stop))
         (entry, target, stop) = patterns.bullish_reversal_212(self.candles["m5"])
-        if entry!=-1:
-            print("Bullish reversal 212 detected")
-            print("Entry: " + str(entry))
-            print("Target: " + str(target))
-            print("Stop: " + str(stop))
+        #if entry!=-1:
+        #    print("Bullish reversal 212 detected")
+        #    print("Entry: " + str(entry))
+        #    print("Target: " + str(target))
+        #    print("Stop: " + str(stop))
 
         self.lastUpdated = datetime.now()
 
@@ -257,15 +272,17 @@ class Ticker:
         # Insert new candle into the candle list if necessary
         for t in self.candles.keys():
             if timestamp >= self.nextCandleOpen[t]:
+                print("New candle for timeframe: " + t)
                 (thisClose, nextOpen) = util.getCandleChange_ms(timestamp, t)
                 #if (timestamp - self.candles[t][-1].timestamp_ms) > util.timeframe_LUT[t][0]:
                 prev_high = self.candles[t][0].high
                 prev_low = self.candles[t][0].low
                 newCandle = candles.Candle(timestamp, price, price, price, price, prev_high, prev_low)
-                self.candles[t].insert(newCandle)
+                self.candles[t].insert(0, newCandle)
                 self.candles[t].pop() 
                 self.thisCandleClose[t] = thisClose
                 self.nextCandleOpen[t] = nextOpen
+                self.debug_print()
 
     def updateClose(self, close_price):
         # Update close prices of live candles
@@ -275,8 +292,8 @@ class Ticker:
     def updateHighLow(self, price):
         # Update high and low of live candles if necessary
         for t in self.candles.keys():
-            if price > self.candles[t][-1].high:
+            if price > self.candles[t][0].high:
                 self.candles[t][0].high = price
-            if price < self.candles[t][-1].low:
+            if price < self.candles[t][0].low:
                 self.candles[t][0].low = price
    
