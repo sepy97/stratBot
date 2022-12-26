@@ -6,12 +6,13 @@ import patterns
 
 class Ticker:
     # Ticker with history at multiple time frames
-    # candles is dictionary of 3-candles for each time frame as 
+    # candles is dictionary of 3-candles for each time frame as
     #   {timeframe: [array of Candles]}
-    # array of candles is sorted in time, with the first element being most recent (live) candle 
+    # array of candles is sorted in time, with the first element being most recent (live) candle
     def __init__(self, symbol, TDSession):
         self.symbol = symbol
-        self.session = TDSession        
+        self.type = TDSession.get_quotes([symbol])[symbol]["assetType"]
+        self.session = TDSession
         self.candles = {}
         self.__getLast3Candles()
         self.lastUpdated = datetime.now()
@@ -22,7 +23,12 @@ class Ticker:
             self.thisCandleClose[t] = thisClose
             self.nextCandleOpen[t] = nextOpen
         self.debug_print()
-    
+
+        self.status = util.TickerStatus.OUT
+        self.entryPrice = 0.0
+        self.stopPrice = 0.0 # Unused for now
+        self.targetPrice = 0.0
+
     def __str__(self):
         return self.symbol + ":"
     
@@ -49,8 +55,8 @@ class Ticker:
                 print(c)
             print("Current candle closes: " + str(datetime.fromtimestamp(self.thisCandleClose[t]/1000)))
             print("Next candle opens: " + str(datetime.fromtimestamp(self.nextCandleOpen[t]/1000)))
-        
-        
+
+
     @staticmethod
     def get_candle_given_data(data):
         # Return array of 3x Candles given data from TD API
@@ -156,7 +162,7 @@ class Ticker:
         self.candles["q"] = self.get_quarter_candle_given_data(candle)
         #print("Quarterly candles:")
         #for c in self.candles["q"]:
-        #    print(c)        
+        #    print(c)
         # Get monthly candles
         # Will use candle data from previous API call
         #data = self.session.get_price_history(symbol=self.symbol, period_type="year", period=1, start_date=None, end_date=None, frequency_type="monthly", frequency=1, extended_hours=False)
@@ -164,7 +170,7 @@ class Ticker:
         self.candles["m"] = self.get_candle_given_data(candle)
         #print("Monthly candles:")
         #for c in self.candles["m"]:
-        #    print(c)        
+        #    print(c)
         # Get weekly candle
         data = self.session.get_price_history(symbol=self.symbol, period_type="month", period=Period, start_date=startDate["w"], end_date=endDate, frequency_type="weekly", frequency=1, extended_hours=False)
         candle = data["candles"]
@@ -237,7 +243,7 @@ class Ticker:
             #result["close"] = candle1["close"]
         #return result 
 
-    def update(self):
+    def update(self, strategy):
         # TODO: description
         data = self.session.get_quotes([self.symbol])
         #print("Quote: ", data)
@@ -251,20 +257,26 @@ class Ticker:
         # create new candles (if necessary; based on the current timeframe)
         self.insertCandle(data[self.symbol]["regularMarketLastPrice"], data[self.symbol]["regularMarketTradeTimeInLong"])
 
-        # detect patterns (should be executed parallelly)
-        # TODO: strategy
-        (entry, target, stop) = patterns.bearish_reversal_212(self.candles["m5"])
-        #if entry!=-1:
-        #    print("Bearish reversal 212 detected")
-        #    print("Entry: " + str(entry))
-        #    print("Target: " + str(target))
-        #    print("Stop: " + str(stop))
-        (entry, target, stop) = patterns.bullish_reversal_212(self.candles["m5"])
-        #if entry!=-1:
-        #    print("Bullish reversal 212 detected")
-        #    print("Entry: " + str(entry))
-        #    print("Target: " + str(target))
-        #    print("Stop: " + str(stop))
+        # detect patterns from the strategy
+        if self.status == util.TickerStatus.OUT:
+            signal = strategy.detect(self.candles)
+            if signal is None:
+                print ("Patterns from the strategy are not detected!")
+            else:
+                self.status = signal
+                self.entryPrice = data[self.symbol]["regularMarketLastPrice"]
+                print("Pattern detected: ", strategy.name)
+                print("Entry: ", self.entryPrice)
+        # signal exiting from the position
+        elif self.status == util.TickerStatus.LONG or self.status == util.TickerStatus.SHORT:
+            signal = strategy.exit_signal(self.candles)
+            if not signal:
+                print ("Exit signal from the strategy is not detected!")
+            else:
+                self.status = util.TickerStatus.OUT
+                print("Exit signal detected: ", strategy.name)
+                print("Exit price: ", data[self.symbol]["regularMarketLastPrice"])
+                print("Entry price was: ", self.entryPrice)
 
         self.lastUpdated = datetime.now()
 
@@ -279,7 +291,7 @@ class Ticker:
                 prev_low = self.candles[t][0].low
                 newCandle = candles.Candle(timestamp, price, price, price, price, prev_high, prev_low)
                 self.candles[t].insert(0, newCandle)
-                self.candles[t].pop() 
+                self.candles[t].pop()
                 self.thisCandleClose[t] = thisClose
                 self.nextCandleOpen[t] = nextOpen
                 self.debug_print()

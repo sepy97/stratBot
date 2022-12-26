@@ -35,8 +35,11 @@ TDSession = session.initTDSession()
 #print(t.to_string())
 # INSTEAD:
 u = updater.Updater(TDSession)
+u.loadStrategy("Bullish reversal simple")
 u.run()
 time.sleep(60)
+#u.addSymbol("QQQ")
+#time.sleep(60)
 u.stop()
 
 print("done")
