@@ -5,9 +5,14 @@ import time
 import ticker
 import session
 import updater
+import util
+import os
 
 # Create a new session, credentials path is required.
 TDSession = session.initTDSession()
+
+# Temporary thing, just for testing
+#os.remove("strat.log")
 
 #price_history_service = TDSession.price_history()
 #quote_service = TDSession.quotes()

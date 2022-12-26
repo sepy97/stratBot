@@ -29,6 +29,8 @@ class Ticker:
         self.stopPrice = 0.0 # Unused for now
         self.targetPrice = 0.0
 
+        self.logger = util.strat_logger("Ticker_"+self.symbol)
+
     def __str__(self):
         return self.symbol + ":"
     
@@ -245,16 +247,20 @@ class Ticker:
 
     def update(self, strategy):
         # TODO: description
+        self.logger.logger.debug("The beginning of an update call: " + str(self))
         data = self.session.get_quotes([self.symbol])
         #print("Quote: ", data)
 
         # update close prices (for live candles from the ticker) using the market price
+        self.logger.logger.debug("Updating close prices")
         self.updateClose(data[self.symbol]["regularMarketLastPrice"])
 
         # update (if necessary) high and low of live candles
+        self.logger.logger.debug("Updating high and low prices")
         self.updateHighLow(data[self.symbol]["regularMarketLastPrice"])
 
         # create new candles (if necessary; based on the current timeframe)
+        self.logger.logger.debug("Inserting new candles")
         self.insertCandle(data[self.symbol]["regularMarketLastPrice"], data[self.symbol]["regularMarketTradeTimeInLong"])
 
         # detect patterns from the strategy
@@ -279,9 +285,12 @@ class Ticker:
                 print("Entry price was: ", self.entryPrice)
 
         self.lastUpdated = datetime.now()
+        self.logger.logger.debug("The end of an update call: " + str(self))
 
     def insertCandle (self, price, timestamp):
         # Insert new candle into the candle list if necessary
+        candles_before_insertion = "Candles before insertion: "
+        candles_after_insertion = "Candles after insertion: "
         for t in self.candles.keys():
             if timestamp >= self.nextCandleOpen[t]:
                 print("New candle for timeframe: " + t)
@@ -298,11 +307,13 @@ class Ticker:
 
     def updateClose(self, close_price):
         # Update close prices of live candles
+        debug_string = "Updating close prices; Close price: " + str(close_price) + " Close of candles: "
         for t in self.candles.keys():
             self.candles[t][0].close = close_price
 
     def updateHighLow(self, price):
         # Update high and low of live candles if necessary
+        debug_string = "Updating high and low prices; Current price: " + str(price) + " High and low of candles: "
         for t in self.candles.keys():
             if price > self.candles[t][0].high:
                 self.candles[t][0].high = price
