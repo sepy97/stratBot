@@ -6,6 +6,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 import ticker
 import util
+import strategy
 import session
 import tzlocal
 import datetime
@@ -21,8 +22,8 @@ class Updater:
         self.symbols = util.loadSymbols()
         self.timezone = timezone="America/Los_Angeles"
         self.sched = BackgroundScheduler(daemon=False, timezone=self.timezone, executors={'threadpool': ThreadPoolExecutor(10000)}) # TODO parameterize 10000 into a (global?) variable
-        self.exportSymbols()
-
+        self.strategy = None #strategy.Strategy()
+        self.scheduled_jobs = []
 
     def run(self):
         # TODO: description
@@ -48,10 +49,24 @@ class Updater:
 
     def addSymbol(self, symbol):
         t = ticker.Ticker(symbol, self.TDSession)
-        print(t.to_string())
-        #print ("Scheduling ", symbol, " to start at ", self.start_date)
-        #thread = threading.Thread(target=self.sched.add_job, args=(t.update, self.trigger))
-        self.sched.add_job(t.update,self.trigger)
+        watchlist_from_file = util.tomlkit.loads(util.Path("config.toml").read_text())
+        found = False
+        for element in watchlist_from_file["watchlist"]:
+            if element["symbol"] == symbol:
+                found = True
+        if not found:
+            watchlist_from_file.add(util.tomlkit.nl())
+            symbol_item = util.tomlkit.item({'symbol': symbol, 'type': t.type})
+            #symbol_item.add(util.tomlkit.nl())
+            watchlist_from_file["watchlist"].append(symbol_item)
+            util.Path("config.toml").write_text(util.tomlkit.dumps(watchlist_from_file))
+            self.symbols.append(symbol)
+
+        if symbol in self.scheduled_jobs:
+            print("Job for symbol ", symbol, " is already scheduled")
+        else:
+            self.sched.add_job(lambda:t.update(self.strategy), self.trigger, id=symbol)
+            self.scheduled_jobs.append(symbol)
 
     def pauseScheduler(self):
         self.sched.pause()
@@ -59,6 +74,10 @@ class Updater:
     def startScheduler(self):
         self.sched.resume()
 
-    def exportSymbols(self):
-        # Function that exports all symbols to a JSON file
-        print("export")
+    def loadStrategy(self, name):
+        strat_dic = util.tomlkit.loads(util.Path("config.toml").read_text())["strategies"]
+        for element in strat_dic:
+            if element["name"] == name:
+                self.strategy = strategy.Strategy(name, element["type"], element["patterns"], element["tfc"], element["exit"])
+                return True
+        print("Strategy not found")
