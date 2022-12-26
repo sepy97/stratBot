@@ -22,8 +22,8 @@ def bearish_reversal_212(data):
         print("CANDIDATE bearish_reversal_212 ")
         if data[2].open < data[1].high and data[2].get_kind() != "3":
             entry = data[1].high
-            target = data[0].high
-            stop = data[1].low
+            target = data[0].low
+            stop = data[1].high
             # stop = (data[1].low + data[1].high)/2 # 50% rule instead of high of previous candle
             return (entry, target, stop)
     return (-1,-1,-1)
