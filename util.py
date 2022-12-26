@@ -38,20 +38,27 @@ def getStartOf3Candles(endTime_ms, timeframe):
     # 3 quarterly candles and 3 monthly candles can be contained within 1 year
     # 3 weekly candles and 3 daily candles require 1 month of data 
     # All intraday timeframes require data starting previous trading day
-    # TODO: add yearly
     endTime = datetime.fromtimestamp(endTime_ms/1000)
-    if (timeframe == "q") or (timeframe == "m"):
-        startTime = endTime - relativedelta(years=1)
-        startTime = int(startTime.timestamp()*1000)
+    if timeframe == "y":
+        startTime = endTime.replace(year=endTime.year-3, month=1, day=1)
+    if (timeframe == "q"):
+        quarterEndMonth = 3*((endTime.month-1)//3+1)
+        startTime = endTime.replace(year=endTime.year-1, month=quarterEndMonth)
+        startTime = (startTime + timedelta(days=32)).replace(day=1) #first day of period of time exactly a year before the end of quarter 
+    if (timeframe == "m"):
+        currentMonth = endTime.month
+        if currentMonth > 3:
+            startTime = endTime.replace(month=currentMonth-3, day=1) 
+        else:
+            startTime = endTime.replace(year=endTime.year-1, month=currentMonth+12-3, day=1)       
     if (timeframe == "w") or (timeframe == "d"):
-        startTime = endTime - relativedelta(months=1)
-        startTime = int(startTime.timestamp()*1000)
-    if (timeframe == "m60") or (timeframe == "m30") or (timeframe == "m15") or (timeframe == "m5"):
+        startTime = endTime - timedelta(days=32)        
+    if (timeframe == "m60") or (timeframe == "m30") or (timeframe == "m15") or (timeframe == "m5"): #TODO: clean up to reduce the amount of data to last trading day only
         nyse = mcal.get_calendar('NYSE')
         prevDay = getPreviousTradingDay(endTime)
         sch = nyse.schedule(datetime.fromtimestamp(prevDay/1000).date(), datetime.fromtimestamp(prevDay/1000).date())
-        startTime = int(1000*sch.iloc[-1]['market_open'].timestamp())
-        
+        startTime = sch.iloc[-1]['market_open']
+    startTime = int(startTime.timestamp()*1000)
     return startTime
 
 def getOpenCloseAtDay(timestamp_ms):
