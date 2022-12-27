@@ -11,7 +11,6 @@ class Ticker:
     # array of candles is sorted in time, with the first element being most recent (live) candle
     def __init__(self, symbol, TDSession):
         self.symbol = symbol
-        self.type = TDSession.get_quotes([symbol])[symbol]["assetType"]
         self.session = TDSession
         self.candles = {}
         self.__getLast3Candles()
@@ -22,17 +21,29 @@ class Ticker:
             (thisClose, nextOpen) = util.getCandleChange_ms(1000*self.lastUpdated.timestamp(), t)
             self.thisCandleClose[t] = thisClose
             self.nextCandleOpen[t] = nextOpen
-        self.debug_print()
+        #self.debug_print()
 
         self.status = util.TickerStatus.OUT
         self.entryPrice = 0.0
         self.stopPrice = 0.0 # Unused for now
         self.targetPrice = 0.0
 
-        self.logger = util.strat_logger("Ticker_"+self.symbol)
+        self.logger = util.strat_logger("Ticker_"+self.symbol, "strat_"+self.symbol+".log")
+        self.logger.logger.debug("Ticker created: " + str(self))
 
     def __str__(self):
-        return self.symbol + ":"
+        output_str = "Symbol: " + str(self.symbol) + " Status: " + str(self.status) + " Last updated: " + str(self.lastUpdated) + " Candles: "
+        for c in self.candles.keys():
+            output_str += "\n\t"
+            #print("We're debugging candles for timeframe: " + str(c))
+            #print(self.candles)
+            #print(self.candles[c])
+            output_str += c + ": "
+            for t in self.candles[c]:
+                output_str += str(t) + " "
+            #output_str += c + ": " + str(self.candles[c]) + " "
+        return output_str
+
     
     def getTFC(self, timeframe=[]):
         tfc = {}
@@ -264,25 +275,23 @@ class Ticker:
         self.insertCandle(data[self.symbol]["regularMarketLastPrice"], data[self.symbol]["regularMarketTradeTimeInLong"])
 
         # detect patterns from the strategy
+        self.logger.logger.debug("Detecting strategy patterns")
         if self.status == util.TickerStatus.OUT:
-            signal = strategy.detect(self.candles)
+            signal = strategy.detect(self.candles, self.logger)
             if signal is None:
-                print ("Patterns from the strategy are not detected!")
+                self.logger.logger.info("No ENTRY signal detected")
             else:
                 self.status = signal
                 self.entryPrice = data[self.symbol]["regularMarketLastPrice"]
-                print("Pattern detected: ", strategy.name)
-                print("Entry: ", self.entryPrice)
+                self.logger.logger.info("ENTRY signal detected: " + str(signal) + " at price " + str(self.entryPrice))
         # signal exiting from the position
         elif self.status == util.TickerStatus.LONG or self.status == util.TickerStatus.SHORT:
-            signal = strategy.exit_signal(self.candles)
+            signal = strategy.exit_signal(self.candles, self.logger)
             if not signal:
-                print ("Exit signal from the strategy is not detected!")
+                self.logger.logger.info("No EXIT signal detected")
             else:
+                self.logger.logger.info("EXIT signal detected: " + str(signal) + " at price " + str(data[self.symbol]["regularMarketLastPrice"] + " where entry price was " + str(self.entryPrice)))
                 self.status = util.TickerStatus.OUT
-                print("Exit signal detected: ", strategy.name)
-                print("Exit price: ", data[self.symbol]["regularMarketLastPrice"])
-                print("Entry price was: ", self.entryPrice)
 
         self.lastUpdated = datetime.now()
         self.logger.logger.debug("The end of an update call: " + str(self))
@@ -292,8 +301,11 @@ class Ticker:
         candles_before_insertion = "Candles before insertion: "
         candles_after_insertion = "Candles after insertion: "
         for t in self.candles.keys():
+            candles_before_insertion += t + ": "
+            candles_after_insertion += t + ": "
             if timestamp >= self.nextCandleOpen[t]:
-                print("New candle for timeframe: " + t)
+                for c in self.candles[t]:
+                    candles_before_insertion += str(c) + " "
                 (thisClose, nextOpen) = util.getCandleChange_ms(timestamp, t)
                 #if (timestamp - self.candles[t][-1].timestamp_ms) > util.timeframe_LUT[t][0]:
                 prev_high = self.candles[t][0].high
@@ -303,20 +315,33 @@ class Ticker:
                 self.candles[t].pop()
                 self.thisCandleClose[t] = thisClose
                 self.nextCandleOpen[t] = nextOpen
-                self.debug_print()
+                #self.debug_print()
+                for c in self.candles[t]:
+                    candles_after_insertion += str(c) + " "
+            else:
+                candles_before_insertion += "No insertion is done "
+                candles_after_insertion += "No insertion is done "
+
+        self.logger.logger.debug(candles_before_insertion)
+        self.logger.logger.debug(candles_after_insertion)
 
     def updateClose(self, close_price):
         # Update close prices of live candles
-        debug_string = "Updating close prices; Close price: " + str(close_price) + " Close of candles: "
+        debug_string = "Close price: " + str(close_price) + " ; Update in candles: "
         for t in self.candles.keys():
+            debug_string += t + ": " + str(self.candles[t][0].close) + " "
             self.candles[t][0].close = close_price
+        self.logger.logger.debug(debug_string)
 
     def updateHighLow(self, price):
         # Update high and low of live candles if necessary
-        debug_string = "Updating high and low prices; Current price: " + str(price) + " High and low of candles: "
+        debug_string = "Current price: " + str(price) + " ; Update in candles: "
         for t in self.candles.keys():
             if price > self.candles[t][0].high:
+                debug_string += "High: " + t + ": " + str(self.candles[t][0].high) + " "
                 self.candles[t][0].high = price
             if price < self.candles[t][0].low:
+                debug_string += "Low: " + t + ": " + str(self.candles[t][0].low) + " "
                 self.candles[t][0].low = price
+        self.logger.logger.debug(debug_string)
    

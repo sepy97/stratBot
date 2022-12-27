@@ -38,10 +38,13 @@ u = updater.Updater(TDSession)
 u.loadStrategy("Bullish reversal simple")
 u.run()
 time.sleep(60)
-#u.addSymbol("QQQ")
-#time.sleep(60)
+u.addSymbol("QQQ")
+u.addSymbol("SQQQ")
+#u.addSymbol("TSLQ") # TSLA inverse -- got an error; probably, because not enough data for yearly/quarterly period
+u.addSymbol("TSLA")
+time.sleep(6)
 u.stop()
 
 print("done")
-time.sleep(10)
+time.sleep(1)
 

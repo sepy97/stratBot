@@ -48,23 +48,25 @@ class Updater:
         self.sched.shutdown()
 
     def addSymbol(self, symbol):
-        t = ticker.Ticker(symbol, self.TDSession)
+        # Look for the symbol in the config file (where we store the watchlist)
         watchlist_from_file = util.tomlkit.loads(util.Path("config.toml").read_text())
         found = False
         for element in watchlist_from_file["watchlist"]:
             if element["symbol"] == symbol:
                 found = True
+                break
         if not found:
             watchlist_from_file.add(util.tomlkit.nl())
-            symbol_item = util.tomlkit.item({'symbol': symbol, 'type': t.type})
-            #symbol_item.add(util.tomlkit.nl())
+            symbol_item = util.tomlkit.item({'symbol': symbol})
             watchlist_from_file["watchlist"].append(symbol_item)
             util.Path("config.toml").write_text(util.tomlkit.dumps(watchlist_from_file))
             self.symbols.append(symbol)
 
+        # Look for the scheduled job for that symbol
         if symbol in self.scheduled_jobs:
             print("Job for symbol ", symbol, " is already scheduled")
         else:
+            t = ticker.Ticker(symbol, self.TDSession)
             self.sched.add_job(lambda:t.update(self.strategy), self.trigger, id=symbol)
             self.scheduled_jobs.append(symbol)
 

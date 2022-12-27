@@ -30,45 +30,38 @@ class Strategy:
         strategies_from_file['strategies'].append(strat_table)
         util.Path(filename).write_text(util.tomlkit.dumps(strategies_from_file))
 
-    def detect(self, data):
+    def detect(self, data, ticker_logger):
         status = util.TickerStatus.OUT
         for t in self.tfc:
             if data[t][0].get_direction() != self.tfc[t]:
-                print("TFC is not the same for ", t)
-                print(data[t][0].get_direction(), " should be ", self.tfc[t])
-                return None 
+                ticker_logger.logger.debug("TFC is not the same for " + t + "; " + data[t][0].get_direction() + " should be " + self.tfc[t])
+                return None
         for p in self.patterns:
             candle_kinds = self.patterns[p].split("-")
             for i in range(len(candle_kinds)):
-                print("Timeframe: ", p)
-                print("Candle ", candle_kinds[i], " comparing to ", data[p][i].to_string())
-                if candle_kinds[i] == data[p][i].to_string():
-                    print("Match found")
-                else:
-                    print("No match")
+                if candle_kinds[i] != data[p][i].to_string():
+                    ticker_logger.logger.debug("No entry match on timeframe " + p)
                     return None
         if self.type == "Long":
             status = util.TickerStatus.LONG
+            ticker_logger.logger.info("Long signal detected on strategy " + self.name)
         elif self.type == "Short":
             status = util.TickerStatus.SHORT
+            ticker_logger.logger.info("Short signal detected on strategy " + self.name)
         else:
             print("Error: strategy type is not Long or Short")
             return None
         return status
 
-    def exit_signal(self, data):
+    def exit_signal(self, data, exit_logger):
         if self.exit["type"] == "counter-reversal":
-            for p in self.exit:
-                if p != "type": # ignore the first element which is a description of the type (short/long)
-                    print("Exit signal for ", p)
-                    print("Candle ", self.exit[p])
+            exit_logger.logger.debug("Exit type is counter-reversal")
+            for p in self.exit: # There is only one exit-pattern
+                if p != "type": # ignore the first element which is a description of the exit type (e,g, counter-reversal)
                     candle_kinds = self.exit[p].split("-")
                     for i in range(len(candle_kinds)):
-                        print("Timeframe: ", p)
-                        print("Candle ", candle_kinds[i], " comparing to ", data[p][i].to_string())
-                        if candle_kinds[i] == data[p][i].to_string():
-                            print("Match found")
-                        else:
-                            print("No match")
+                        if candle_kinds[i] != data[p][i].to_string():
+                            exit_logger.logger.debug("No exit match on timeframe " + p)
                             return False
+                    exit_logger.logger.info("Exit signal detected on pattern " + self.exit)
         return True

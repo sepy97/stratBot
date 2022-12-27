@@ -24,7 +24,8 @@ class strat_logger:
         self.logger.setLevel(logging.DEBUG)
         # create a file handler
         handler = logging.FileHandler(log_file)
-        handler.setLevel(logging.DEBUG)
+        # This level is responsible for the output to the file
+        handler.setLevel(logging.DEBUG)#(logging.INFO)
         # create a logging format
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
