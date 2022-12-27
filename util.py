@@ -16,11 +16,26 @@ from pathlib import Path
 
 from enum import Enum
 
+import logging
+
+class strat_logger:
+    def __init__(self, name, log_file='strat.log'):
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(logging.DEBUG)
+        # create a file handler
+        handler = logging.FileHandler(log_file)
+        # This level is responsible for the output to the file
+        handler.setLevel(logging.DEBUG)#(logging.INFO)
+        # create a logging format
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        # add the handlers to the logger
+        self.logger.addHandler(handler)
+
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT
 #timeframe_LUT = {'y': (365*24*60*60*1000, "year", "yearly", 1), 'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
 timeframe_LUT = {'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
-timeframe_LUT = {'y': (365*24*60*60*1000, "year", "yearly", 1), 'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
 
 class TickerStatus(Enum):
     OUT = 1

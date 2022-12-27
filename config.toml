@@ -55,12 +55,6 @@ m5 = "2D-1-2U"
 
 [[watchlist]]
 symbol = "MSFT"
-type = "EQUITY"
 
 [[watchlist]]
 symbol = "AAPL"
-type = "EQUITY"
-
-[[watchlist]]
-symbol = "QQQ"
-type = "ETF"
