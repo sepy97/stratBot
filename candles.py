@@ -17,7 +17,7 @@ class Candle:
         # 1 - inside candle
         # 2 - directional candle
         # 3 - outside candle
-        if self.high < self.previous_high and self.low > self.previous_low:
+        if self.high <= self.previous_high and self.low >= self.previous_low:
             return "1"
         elif self.high > self.previous_high and self.low < self.previous_low:
             return "3"
