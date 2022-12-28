@@ -259,7 +259,15 @@ class Ticker:
     def update(self, strategy):
         # TODO: description
         self.logger.logger.debug("The beginning of an update call: " + str(self))
-        data = self.session.get_quotes([self.symbol])
+        data = {}
+        counter = 0
+        while not data:   # TD API quote sometimes returns no data, retry getting quote up to 10 times before giving up completely
+            counter = counter + 1
+            data = self.session.get_quotes([self.symbol])
+            self.logger.logger.debug("Quote request returned no data")
+            if counter >= 10:
+                self.logger.logger.debug("Quote returned no data too many times")
+                exit(-1)
         #print("Quote: ", data)
 
         # update close prices (for live candles from the ticker) using the market price
