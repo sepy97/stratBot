@@ -58,3 +58,7 @@ symbol = "MSFT"
 
 [[watchlist]]
 symbol = "AAPL"
+
+
+[paths]
+logs = '''/Users/sepy/Library/Mobile\ Documents/com\~apple\~CloudDocs/logs/'''

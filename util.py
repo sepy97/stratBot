@@ -17,6 +17,8 @@ from pathlib import Path
 from enum import Enum
 
 import logging
+import pytz
+import os
 
 class strat_logger:
     def __init__(self, name, log_file='strat.log'):
@@ -189,3 +191,12 @@ def loadSymbols():
     for element in dic["watchlist"]:
         symbols.append(element["symbol"])
     return symbols
+
+def moveLogs(destPath=None, tzone="America/Los_Angeles"):
+    if destPath is None:
+        dic = tomlkit.loads(Path("config.toml").read_text())
+        destPath = dic["paths"]["logs"]
+    dt = datetime.now(tz=pytz.timezone(tzone))
+    cloudDir = str(destPath+dt.strftime("%Y-%m-%d")+"/"+dt.strftime("%H:%M:%S"))
+    os.system("mkdir -p "+cloudDir)
+    os.system(str("mv *.log "+cloudDir))

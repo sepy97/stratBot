@@ -6,7 +6,6 @@ import ticker
 import session
 import updater
 import util
-import os
 
 # Create a new session, credentials path is required.
 TDSession = session.initTDSession()
@@ -44,7 +43,8 @@ u.addSymbol("SQQQ")
 u.addSymbol("TSLA")
 time.sleep(6)
 u.stop()
-
-print("done")
+print("Updater is done!\nMoving logs...")
+util.moveLogs()
+print("Finished!")
 time.sleep(1)
 
