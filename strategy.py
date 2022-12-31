@@ -38,7 +38,11 @@ class Strategy:
                 return None
         for p in self.patterns:
             candle_kinds = self.patterns[p].split("-")
-            for i in range(len(candle_kinds)):
+            # Candle kinds in the strategy pattern are kept in chronological order (from the oldest to the newest),
+            # while data is stored in reversed order (first the most recent, then the older one, etc)
+            #for i in range(len(candle_kinds)):
+            for i in reversed(range(len(candle_kinds))):
+                ticker_logger.logger.debug("Candle kind # " + str(i) + ": " + candle_kinds[i] + " vs " + data[p][i].to_string())
                 if candle_kinds[i] != data[p][i].to_string():
                     ticker_logger.logger.debug("No entry match on timeframe " + p)
                     return None
@@ -59,7 +63,11 @@ class Strategy:
             for p in self.exit: # There is only one exit-pattern
                 if p != "type": # ignore the first element which is a description of the exit type (e,g, counter-reversal)
                     candle_kinds = self.exit[p].split("-")
-                    for i in range(len(candle_kinds)):
+                    # Candle kinds in the strategy pattern are kept in chronological order (from the oldest to the newest),
+                    # while data is stored in reversed order (first the most recent, then the older one, etc)
+                    #for i in range(len(candle_kinds)):
+                    for i in reversed(range(len(candle_kinds))):
+                        exit_logger.logger.debug("Candle kind # " + str(i) + ": " + candle_kinds[i] + " vs " + data[p][i].to_string())
                         if candle_kinds[i] != data[p][i].to_string():
                             exit_logger.logger.debug("No exit match on timeframe " + p)
                             return False
