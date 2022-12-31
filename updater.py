@@ -56,9 +56,10 @@ class Updater:
                 found = True
                 break
         if not found:
-            watchlist_from_file.add(util.tomlkit.nl())
             symbol_item = util.tomlkit.item({'symbol': symbol})
-            watchlist_from_file["watchlist"].append(symbol_item)
+            watchlist_AOT = util.tomlkit.aot()
+            watchlist_AOT.append(symbol_item)
+            watchlist_from_file.append("watchlist", watchlist_AOT)
             util.Path("config.toml").write_text(util.tomlkit.dumps(watchlist_from_file))
             self.symbols.append(symbol)
 
