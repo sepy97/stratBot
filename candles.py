@@ -63,7 +63,10 @@ class Candle:
     
     def get_direction(self):
         # Return candle direction
-        if self.open < self.close:
+        if (self.open is None) or (self.close is None):
+            print ("Error: Candle has no direction!")
+            return "X"
+        elif self.open <= self.close:
             return "G"
         else:
             return "R"

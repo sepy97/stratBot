@@ -39,6 +39,9 @@ class Ticker:
             #print(self.candles)
             #print(self.candles[c])
             output_str += c + ": "
+            if self.candles[c] is None:
+                output_str += "Candle is empty!!!"
+                continue
             for t in self.candles[c]:
                 output_str += str(t) + " "
             #output_str += c + ": " + str(self.candles[c]) + " "
@@ -53,6 +56,9 @@ class Ticker:
             #timeframe = DEFAULT_TIMEFRAME_ARR
             timeframe = self.candles.keys()
         for current_timeframe in timeframe:
+            if self.candles[current_timeframe] is None:
+                tfc[current_timeframe] = 'X'
+                continue
             tfc[current_timeframe] = self.candles[current_timeframe][0].get_direction()
         return tfc
 
@@ -73,6 +79,7 @@ class Ticker:
     @staticmethod
     def get_candle_given_data(data):
         # Return array of 3x Candles given data from TD API
+        # TODO: check that data is not empty!
         candle_list = [candles.Candle(data[-1]["datetime"], data[-1]["open"], data[-1]["high"], data[-1]["low"], data[-1]["close"], data[-2]["high"], data[-2]["low"]),
                        candles.Candle(data[-2]["datetime"], data[-2]["open"], data[-2]["high"], data[-2]["low"], data[-2]["close"], data[-3]["high"], data[-3]["low"]),
                        candles.Candle(data[-3]["datetime"], data[-3]["open"], data[-3]["high"], data[-3]["low"], data[-3]["close"], data[-4]["high"], data[-4]["low"])
@@ -85,6 +92,7 @@ class Ticker:
         # Specifically for quarter data
         # Receive monthly data and convert to quarterly data by merging 3 months into 1 quarter
         # Find which months fall within this current quarter
+        # TODO: check that data is not empty!
         lastCandleTimestamp = data[-1]["datetime"]//1000   # convert ms into seconds, timestamp is in epoch format 
         lastCandleMonth = datetime.fromtimestamp(lastCandleTimestamp).month+1   # this is a hack, TD returns previous month 10pm timestamp here 
         numMonthInThisQuarter = lastCandleMonth%3
@@ -94,6 +102,13 @@ class Ticker:
         candle_quarter_2 = Ticker.__mergeCandles(data[-numMonthInThisQuarter-3:-numMonthInThisQuarter])
         candle_quarter_3 = Ticker.__mergeCandles(data[-numMonthInThisQuarter-6:-numMonthInThisQuarter-3])
         candle_quarter_4 = Ticker.__mergeCandles(data[-numMonthInThisQuarter-9:-numMonthInThisQuarter-6])
+        # Check if any of the quarters are empty
+        if (candle_quarter_1 == {}) or (candle_quarter_2 == {}) or (candle_quarter_3 == {}) or (candle_quarter_4 == {}):
+            print("We're working on a ticker which doesn't have enough data to create 4 quarters!!")
+            return None
+
+        print("Quarter candles: \n" + str(candle_quarter_1) + " \n" + str(candle_quarter_2) + " \n" + str(candle_quarter_3) + " \n" + str(candle_quarter_4))
+
         candle_list = [candles.Candle(candle_quarter_1["datetime"], candle_quarter_1["open"], candle_quarter_1["high"], candle_quarter_1["low"], candle_quarter_1["close"], candle_quarter_2["high"], candle_quarter_2["low"]),
                        candles.Candle(candle_quarter_2["datetime"], candle_quarter_2["open"], candle_quarter_2["high"], candle_quarter_2["low"], candle_quarter_2["close"], candle_quarter_3["high"], candle_quarter_3["low"]),
                        candles.Candle(candle_quarter_3["datetime"], candle_quarter_3["open"], candle_quarter_3["high"], candle_quarter_3["low"], candle_quarter_3["close"], candle_quarter_4["high"], candle_quarter_4["low"])
@@ -106,6 +121,7 @@ class Ticker:
         # Specifically for hour data
         # Receive 30min data and convert to hourly data by merging 2 30min into 1 hour
         # We need to find if the last 30min candle falls in the beginning or in the end of the hour
+        # TODO: check that data is not empty!
         lastCandleTimestamp = data[-1]["datetime"]//1000   # convert ms into seconds, timestamp is in epoch format 
         lastCandleMinute = datetime.fromtimestamp(lastCandleTimestamp).minute
         candle_list = []
@@ -114,6 +130,9 @@ class Ticker:
             merged_candle_two = Ticker.__mergeCandles([data[-2], data[-3]])
             merged_candle_three = Ticker.__mergeCandles([data[-4], data[-5]])
             merged_candle_four = Ticker.__mergeCandles([data[-6], data[-7]])
+            if (merged_candle_two is None) or (merged_candle_three is None) or (merged_candle_four is None):
+                print("We're working on a ticker which doesn't have enough data to create 4 hours!!")
+                return None
             candle_hour_2 = candles.Candle (merged_candle_two["datetime"], merged_candle_two["open"], merged_candle_two["high"], merged_candle_two["low"], merged_candle_two["close"], merged_candle_three["high"], merged_candle_three["low"])
             candle_hour_3 = candles.Candle (merged_candle_three["datetime"], merged_candle_three["open"], merged_candle_three["high"], merged_candle_three["low"], merged_candle_three["close"], merged_candle_four["high"], merged_candle_four["low"])
         else: # last candle is second half of the hour
@@ -121,6 +140,9 @@ class Ticker:
             merged_candle_two = Ticker.__mergeCandles([data[-3], data[-4]])
             merged_candle_three = Ticker.__mergeCandles([data[-5], data[-6]])
             merged_candle_four = Ticker.__mergeCandles([data[-7], data[-8]])
+            if (merged_candle_one is None) or (merged_candle_two is None) or (merged_candle_three is None) or (merged_candle_four is None):
+                print("We're working on a ticker which doesn't have enough data to create 4 hours!!")
+                return None
             candle_hour_1 = candles.Candle (merged_candle_one["datetime"], merged_candle_one["open"], merged_candle_one["high"], merged_candle_one["low"], merged_candle_one["close"], merged_candle_two["high"], merged_candle_two["low"])
             candle_hour_2 = candles.Candle (merged_candle_two["datetime"], merged_candle_two["open"], merged_candle_two["high"], merged_candle_two["low"], merged_candle_two["close"], merged_candle_three["high"], merged_candle_three["low"])
             candle_hour_3 = candles.Candle (merged_candle_three["datetime"], merged_candle_three["open"], merged_candle_three["high"], merged_candle_three["low"], merged_candle_three["close"], merged_candle_four["high"], merged_candle_four["low"])
@@ -337,7 +359,11 @@ class Ticker:
         # Update close prices of live candles
         debug_string = "Close price: " + str(close_price) + " ; Update in candles: "
         for t in self.candles.keys():
-            debug_string += t + ": " + str(self.candles[t][0].close) + " "
+            debug_string += t + ": "
+            if self.candles[t] is None:
+                debug_string += "No candles for this timeframe "
+                continue
+            debug_string += str(self.candles[t][0].close) + " "
             self.candles[t][0].close = close_price
         self.logger.logger.debug(debug_string)
 
@@ -345,6 +371,9 @@ class Ticker:
         # Update high and low of live candles if necessary
         debug_string = "Current price: " + str(price) + " ; Update in candles: "
         for t in self.candles.keys():
+            if self.candles[t] is None:
+                debug_string += t + ": No candles for this timeframe "
+                continue
             if price > self.candles[t][0].high:
                 debug_string += "High: " + t + ": " + str(self.candles[t][0].high) + " "
                 self.candles[t][0].high = price
