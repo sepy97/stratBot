@@ -251,13 +251,8 @@ class Ticker:
         volume = [x["volume"] for x in candleList]
         minpos = timestamp.index(min(timestamp))
         maxpos = timestamp.index(max(timestamp))
-        result = {}
-        result["datetime"] = candleList[minpos]["datetime"]
-        result["open"] = candleList[minpos]["open"]
-        result["high"] = max(high)
-        result["low"] = min(low)
-        result["close"] = candleList[maxpos]["close"]
-        result["volume"] = sum(volume)
+        result = {"datetime": candleList[minpos]["datetime"], "open": candleList[minpos]["open"], "high": max(high),
+                  "low": min(low), "close": candleList[maxpos]["close"], "volume": sum(volume)}
         return result
     
     #@staticmethod    
@@ -281,7 +276,7 @@ class Ticker:
     def update(self, strategy):
         # TODO: description
         self.logger.logger.debug("The beginning of an update call: " + str(self))
-        data = {}
+        data = self.session.get_quotes([self.symbol])
         counter = 0
         while not data:   # TD API quote sometimes returns no data, retry getting quote up to 10 times before giving up completely
             counter = counter + 1

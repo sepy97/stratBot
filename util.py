@@ -188,8 +188,11 @@ def loadSymbols():
     symbols = []
 
     dic = tomlkit.loads(Path("config.toml").read_text())
-    for element in dic["watchlist"]:
-        symbols.append(element["symbol"])
+    if "watchlist" in dic:
+        for element in dic["watchlist"]:
+            symbols.append(element["symbol"])
+    else:
+        print("No watchlist in config.toml!!!")
     return symbols
 
 def moveLogs(destPath=None, tzone="America/Los_Angeles"):
@@ -197,6 +200,6 @@ def moveLogs(destPath=None, tzone="America/Los_Angeles"):
         dic = tomlkit.loads(Path("config.toml").read_text())
         destPath = dic["paths"]["logs"]
     dt = datetime.now(tz=pytz.timezone(tzone))
-    cloudDir = str(destPath+dt.strftime("%Y-%m-%d")+"/"+dt.strftime("%H:%M:%S"))
+    cloudDir = str(destPath+dt.strftime("%Y-%m-%d")+"/"+dt.strftime("%H.%M.%S"))
     os.system("mkdir -p "+cloudDir)
     os.system(str("mv *.log "+cloudDir))

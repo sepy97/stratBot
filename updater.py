@@ -51,10 +51,11 @@ class Updater:
         # Look for the symbol in the config file (where we store the watchlist)
         watchlist_from_file = util.tomlkit.loads(util.Path("config.toml").read_text())
         found = False
-        for element in watchlist_from_file["watchlist"]:
-            if element["symbol"] == symbol:
-                found = True
-                break
+        if "watchlist" in watchlist_from_file:
+            for element in watchlist_from_file["watchlist"]:
+                if element["symbol"] == symbol:
+                    found = True
+                    break
         if not found:
             symbol_item = util.tomlkit.item({'symbol': symbol})
             watchlist_AOT = util.tomlkit.aot()
