@@ -18,10 +18,44 @@ class Candle:
         # 2 - directional candle
         # 3 - outside candle
         if self.high <= self.previous_high and self.low >= self.previous_low:
+            '''
+             _
+            | |_
+            | |_|
+            |_|
+             _ _
+            | |_|
+            |_|
+             _ _
+            | | |
+            |_|_|
+            '''
             return "1"
         elif self.high > self.previous_high and self.low < self.previous_low:
+            '''
+               _
+             _| |
+            |_| |
+              |_|
+            '''
             return "3"
-        elif (self.high > self.previous_high and self.low > self.previous_low) or (self.high < self.previous_high and self.low < self.previous_low):
+        elif (self.high >= self.previous_high and self.low >= self.previous_low) or (self.high <= self.previous_high and self.low <= self.previous_low):
+            '''
+               _
+             _| |
+            | |_|
+            |_|
+             _
+            | |_
+            |_| |
+              |_|
+             _
+            | |_
+            |_|_|
+             _ _
+            |_| |
+              |_|
+            '''
             return "2"
         else:
             print ("Error: Candle doesn't fit any kind!")
