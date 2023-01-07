@@ -107,7 +107,7 @@ class Ticker:
             print("We're working on a ticker which doesn't have enough data to create 4 quarters!!")
             return None
 
-        print("Quarter candles: \n" + str(candle_quarter_1) + " \n" + str(candle_quarter_2) + " \n" + str(candle_quarter_3) + " \n" + str(candle_quarter_4))
+        #print("Quarter candles: \n" + str(candle_quarter_1) + " \n" + str(candle_quarter_2) + " \n" + str(candle_quarter_3) + " \n" + str(candle_quarter_4))
 
         candle_list = [candles.Candle(candle_quarter_1["datetime"], candle_quarter_1["open"], candle_quarter_1["high"], candle_quarter_1["low"], candle_quarter_1["close"], candle_quarter_2["high"], candle_quarter_2["low"]),
                        candles.Candle(candle_quarter_2["datetime"], candle_quarter_2["open"], candle_quarter_2["high"], candle_quarter_2["low"], candle_quarter_2["close"], candle_quarter_3["high"], candle_quarter_3["low"]),
@@ -315,7 +315,7 @@ class Ticker:
             if not signal:
                 self.logger.logger.info("No EXIT signal detected")
             else:
-                self.logger.logger.info("EXIT signal detected: " + str(signal) + " at price " + str(data[self.symbol]["regularMarketLastPrice"] + " where entry price was " + str(self.entryPrice)))
+                self.logger.logger.info("EXIT signal detected: " + str(signal) + " at price " + str(data[self.symbol]["regularMarketLastPrice"]) + " where entry price was " + str(self.entryPrice))
                 self.status = util.TickerStatus.OUT
 
         self.lastUpdated = datetime.now()

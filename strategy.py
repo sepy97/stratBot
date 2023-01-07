@@ -71,5 +71,5 @@ class Strategy:
                         if candle_kinds[i] != data[p][i].to_string():
                             exit_logger.logger.debug("No exit match on timeframe " + p)
                             return False
-                    exit_logger.logger.info("Exit signal detected on pattern " + self.exit)
+                    exit_logger.logger.info("Exit signal detected on pattern " + p + ": " + self.exit[p])
         return True
