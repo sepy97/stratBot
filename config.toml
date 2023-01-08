@@ -53,11 +53,22 @@ type = "counter-reversal"
 m5 = "2D-1-2U"
 
 
-[[watchlist]]
-symbol = "MSFT"
+[[strategies]]
+name = "Bullish reversal 2-2"
+type = "Long"
 
-[[watchlist]]
-symbol = "AAPL"
+[strategies.patterns]
+m5 = "2U-2D"
+d = "2U"
+
+[strategies.tfc]
+m60 = "G"
+d = "G"
+w = "G"
+
+[strategies.exit]
+type = "counter-reversal"
+m5 = "2D-2U"
 
 
 [paths]
