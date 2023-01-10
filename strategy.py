@@ -41,9 +41,10 @@ class Strategy:
             # Candle kinds in the strategy pattern are kept in chronological order (from the oldest to the newest),
             # while data is stored in reversed order (first the most recent, then the older one, etc)
             #for i in range(len(candle_kinds)):
-            for i in reversed(range(len(candle_kinds))):
-                ticker_logger.logger.debug("Candle kind # " + str(i) + ": " + candle_kinds[i] + " vs " + data[p][i].to_string())
-                if candle_kinds[i] != data[p][i].to_string():
+            n = len(candle_kinds)
+            for i in reversed(range(n)):    # start checking from the oldest candle
+                ticker_logger.logger.debug("Candle kind # " + str(i) + ": " + candle_kinds[n-i-1] + " vs " + data[p][i].to_string())
+                if candle_kinds[n-i-1] != data[p][i].to_string():
                     ticker_logger.logger.debug("No entry match on timeframe " + p)
                     return None
         if self.type == "Long":
