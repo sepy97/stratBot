@@ -276,15 +276,31 @@ class Ticker:
     def update(self, strategy):
         # TODO: description
         self.logger.logger.debug("The beginning of an update call: " + str(self))
-        data = self.session.get_quotes([self.symbol])
+        #data = self.session.get_quotes([self.symbol])
         counter = 0
-        while not data:   # TD API quote sometimes returns no data, retry getting quote up to 10 times before giving up completely
-            counter = counter + 1
-            data = self.session.get_quotes([self.symbol])
-            self.logger.logger.debug("Quote request returned no data")
-            if counter >= 10:
-                self.logger.logger.debug("Quote returned no data too many times")
-                exit(-1)
+        while counter < util.request_retry_num:
+            try:
+                data = self.session.get_quotes([self.symbol])
+            except:
+                self.logger.logger.debug("Exception occurred during request for quotes. Attempt # " + str(counter))
+                counter = counter + 1
+            else:
+                if not data:    # TD API quote sometimes returns no data, retry getting quote up to 10 times before giving up completely
+                    self.logger.logger.debug("Quote request returned no data. Attempt # " + str(counter))
+                    counter = counter + 1
+                else:           # We get here if no exception and valid data got pulled
+                    break
+        if counter == util.request_retry_num:   # We get here if counter got to max attempts allowed + 1
+            self.logger.logger.debug("Quote returned no data too many times")
+            exit(-1)
+        
+        #while not data:   # TD API quote sometimes returns no data, retry getting quote up to 10 times before giving up completely
+        #    counter = counter + 1
+        #    data = self.session.get_quotes([self.symbol])
+        #    self.logger.logger.debug("Quote request returned no data")
+        #    if counter >= 10:
+        #        self.logger.logger.debug("Quote returned no data too many times")
+        #        exit(-1)
         #print("Quote: ", data)
 
         # update close prices (for live candles from the ticker) using the market price
