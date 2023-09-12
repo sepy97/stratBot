@@ -4,42 +4,90 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import queue
 import time
 
-def retrieveData(input_queue, output_queues, DR_condition, ticker_condition):
-    print("Data retriever started", flush=True)
-    # here thread should wait for items in the input_queue
-    while True:
-        with DR_condition:
-            DR_condition.wait()
-        watchlist = input_queue.get(timeout=1)
-        print(f"Data retriever got {watchlist}", flush=True)
-        for symbol in watchlist:
-            print("Data retriever got " + symbol, flush=True)
-            output_queues[watchlist.index(symbol)].put(symbol)
-        with ticker_condition:
-            ticker_condition.notify_all()
-    return
 
-def runBroker(input_queue, broker_condition):
-    print("Broker started")
-    while True:
-        with broker_condition:
-            broker_condition.wait()
-        while not input_queue.empty():
-            symbol = input_queue.get(timeout=1)
-            print(f"Broker got {symbol}", flush=True)
-    return
+class DataRetrieval(threading.Thread):
+    def __init__(self, watchlist, input_queue, output_queues, DR_condition, ticker_condition, *args, **kwargs):
+        super(DataRetrieval, self).__init__(*args, **kwargs)
+        self._stopper = threading.Event()
+        self.watchlist = watchlist
+        self.input_queue = input_queue
+        self.output_queues = output_queues
+        self.DR_condition = DR_condition
+        self.ticker_condition = ticker_condition
 
-def runTicker(input_queue, output_queue, ticker_condition, broker_condition):
-    # TODO: initialization???
-    while True:
-        with ticker_condition:
-            ticker_condition.wait()
-        symbol = input_queue.get(timeout=1)
-        print(f"Ticker started for {symbol}", flush=True)
-        output_queue.put(symbol)
-        with broker_condition:
-            broker_condition.notify()
-    return
+    def stopThr(self):
+        self._stopper.set()
+
+    def stopped(self):
+        return self._stopper.is_set()
+
+    def run(self):
+        while True:
+            if self.stopped():
+                break
+            with self.DR_condition:
+                self.DR_condition.wait()
+            self.watchlist = self.input_queue.get(timeout=1)
+            print(f"Data retriever got {self.watchlist}", flush=True)
+            for symbol in self.watchlist:
+                print("Data retriever got " + symbol, flush=True)
+                self.output_queues[self.watchlist.index(symbol)].put(symbol)
+            with self.ticker_condition:
+                self.ticker_condition.notify_all()
+        return
+
+class Broker(threading.Thread):
+    def __init__(self, input_queue, broker_condition, *args, **kwargs):
+        super(Broker, self).__init__(*args, **kwargs)
+        self._stopper = threading.Event()
+        self.input_queue = input_queue
+        self.broker_condition = broker_condition
+
+    def stopThr(self):
+        self._stopper.set()
+
+    def stopped(self):
+        return self._stopper.is_set()
+
+    def run(self):
+        while True:
+            if self.stopped():
+                break
+            with self.broker_condition:
+                self.broker_condition.wait()
+            while not self.input_queue.empty():
+                symbol = self.input_queue.get(timeout=1)
+                print(f"Broker got {symbol}", flush=True)
+        return
+
+class Ticker(threading.Thread):
+        def __init__(self, input_queue, output_queue, ticker_condition, broker_condition, *args, **kwargs):
+            super(Ticker, self).__init__(*args, **kwargs)
+            self._stopper = threading.Event()
+            self.input_queue = input_queue
+            self.output_queue = output_queue
+            self.ticker_condition = ticker_condition
+            self.broker_condition = broker_condition
+
+        def stopThr(self):
+            self._stopper.set()
+
+        def stopped(self):
+            return self._stopper.is_set()
+
+        def run(self):
+            while True:
+                if self.stopped():
+                    break
+                with self.ticker_condition:
+                    self.ticker_condition.wait()
+                symbol = self.input_queue.get(timeout=1)
+                print(f"Ticker started for {symbol}", flush=True)
+                self.output_queue.put(symbol)
+                with self.broker_condition:
+                    self.broker_condition.notify()
+            return
+
 
 def scheduleDataRetrieval(symbols, output_queue, DR_condition):
     # append symbols to the output queue
@@ -69,19 +117,19 @@ if __name__ == '__main__':
     broker_condition = threading.Condition()
 
     # authorize data retriever
-    data_retriever = threading.Thread(target=retrieveData, args=(DR_queue, ticker_queues, DR_condition, ticker_condition), daemon=True)
+    data_retriever = DataRetrieval(watchlist, DR_queue, ticker_queues, DR_condition, ticker_condition, daemon=True)
     # data_retriever should send data (via map) to ticker threads
     data_retriever.start()
 
     # authorize broker
-    broker = threading.Thread(target=runBroker, args=(broker_queue,broker_condition), daemon=True)
+    broker = Broker(broker_queue, broker_condition, daemon=True)
     # broker should wait for signals from ticker threads
     broker.start()
 
     # get tickers from watchlist, create an iterable collection of threads, and start threads for each ticker
     tickers = []
     for symbol in watchlist:
-        tickers.append(threading.Thread(target=runTicker, args=(ticker_queues[watchlist.index(symbol)], broker_queue, ticker_condition, broker_condition), daemon=True))
+        tickers.append(Ticker(ticker_queues[watchlist.index(symbol)], broker_queue, ticker_condition, broker_condition, daemon=True))
     for t in tickers:
         # each thread should first initialize the ticker, then start waiting for the signal from the data retriever
         t.start()
@@ -91,17 +139,22 @@ if __name__ == '__main__':
     scheduler.add_job(lambda:scheduleDataRetrieval(watchlist, DR_queue, DR_condition), 'interval', seconds=5, timezone="America/Los_Angeles")
     scheduler.start()
 
-    time.sleep(10)
+    time.sleep(60)
 
     # finish all threads while saving the state of the program
-    data_retriever.join()
-    broker.join()
+    data_retriever.stopThr()
+    #data_retriever.join()
+    broker.stopThr()
+    #broker.join()
     # export the watchlist
     #util.exportWatchlist()
     for t in tickers:
         # save the state of each ticker?
-        t.join()
-    scheduler.shutdown()
+        t.stopThr()
+        #t.join()
+
+    print ("FINISHING the scheduler!")
+    scheduler.shutdown(wait=False)
 
 
 
