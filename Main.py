@@ -99,9 +99,6 @@ def scheduleDataRetrieval(symbols, output_queue, DR_condition):
 
 # entry point for the program
 if __name__ == '__main__':
-
-    # TODO: override the class Thread and add a stop() method: https://www.geeksforgeeks.org/python-different-ways-to-kill-a-thread/
-
     # load watchlist from config file
     #watchlist = util.loadSymbols()
     watchlist = ["QQQ", "SQQQ", "TSLA", "TSLQ"]
