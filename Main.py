@@ -3,12 +3,21 @@ import util
 from apscheduler.schedulers.background import BackgroundScheduler
 import queue
 import time
+import alpaca_chart
 
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.requests import StockLatestQuoteRequest
+from alpaca.data.requests import StockLatestBarRequest
+from alpaca.data.timeframe import TimeFrame
+from datetime import datetime, timedelta
+
+import pandas as pd
 
 class DataRetrieval(threading.Thread):
-    def __init__(self, watchlist, input_queue, output_queues, DR_condition, ticker_condition, *args, **kwargs):
+    def __init__(self, session, watchlist, input_queue, output_queues, DR_condition, ticker_condition, *args, **kwargs):
         super(DataRetrieval, self).__init__(*args, **kwargs)
         self._stopper = threading.Event()
+        self.session = session
         self.watchlist = watchlist
         self.input_queue = input_queue
         self.output_queues = output_queues
@@ -28,10 +37,14 @@ class DataRetrieval(threading.Thread):
             with self.DR_condition:
                 self.DR_condition.wait()
             self.watchlist = self.input_queue.get(timeout=1)
-            print(f"Data retriever got {self.watchlist}", flush=True)
+
+            request_params = StockLatestBarRequest(symbol_or_symbols=self.watchlist, timeframe=TimeFrame.Minute)
+            bars = session.get_stock_latest_bar(request_params)
+
             for symbol in self.watchlist:
-                print("Data retriever got " + symbol, flush=True)
-                self.output_queues[self.watchlist.index(symbol)].put(symbol)
+                self.output_queues[self.watchlist.index(symbol)].put(bars[symbol])
+            # rewrite this loop with map
+            # map(lambda s: self.output_queues[self.watchlist.index(s)].put(s), self.watchlist)
             with self.ticker_condition:
                 self.ticker_condition.notify_all()
         return
@@ -61,13 +74,14 @@ class Broker(threading.Thread):
         return
 
 class Ticker(threading.Thread):
-        def __init__(self, input_queue, output_queue, ticker_condition, broker_condition, *args, **kwargs):
+        def __init__(self, symbol, input_queue, output_queue, ticker_condition, broker_condition, *args, **kwargs):
             super(Ticker, self).__init__(*args, **kwargs)
             self._stopper = threading.Event()
             self.input_queue = input_queue
             self.output_queue = output_queue
             self.ticker_condition = ticker_condition
             self.broker_condition = broker_condition
+            self.symbol = symbol
 
         def stopThr(self):
             self._stopper.set()
@@ -81,13 +95,12 @@ class Ticker(threading.Thread):
                     break
                 with self.ticker_condition:
                     self.ticker_condition.wait()
-                symbol = self.input_queue.get(timeout=1)
-                print(f"Ticker started for {symbol}", flush=True)
-                self.output_queue.put(symbol)
+                quote = self.input_queue.get(timeout=1)
+                print(f"Ticker received quote {quote} for symbol {self.symbol}", flush=True)
+                self.output_queue.put(self.symbol)
                 with self.broker_condition:
                     self.broker_condition.notify()
             return
-
 
 def scheduleDataRetrieval(symbols, output_queue, DR_condition):
     # append symbols to the output queue
@@ -101,7 +114,8 @@ def scheduleDataRetrieval(symbols, output_queue, DR_condition):
 if __name__ == '__main__':
     # load watchlist from config file
     #watchlist = util.loadSymbols()
-    watchlist = ["QQQ", "SQQQ", "TSLA", "TSLQ"]
+    watchlist = ["QQQ", "SQQQ", "TSLA", "AAPL"]
+    session = alpaca_chart.initSession()
 
     # create global queues for scheduled data retrieval, for data of tickers, and for signals to broker
     DR_queue = queue.Queue()
@@ -114,7 +128,7 @@ if __name__ == '__main__':
     broker_condition = threading.Condition()
 
     # authorize data retriever
-    data_retriever = DataRetrieval(watchlist, DR_queue, ticker_queues, DR_condition, ticker_condition, daemon=True)
+    data_retriever = DataRetrieval(session, watchlist, DR_queue, ticker_queues, DR_condition, ticker_condition, daemon=True)
     # data_retriever should send data (via map) to ticker threads
     data_retriever.start()
 
@@ -126,7 +140,7 @@ if __name__ == '__main__':
     # get tickers from watchlist, create an iterable collection of threads, and start threads for each ticker
     tickers = []
     for symbol in watchlist:
-        tickers.append(Ticker(ticker_queues[watchlist.index(symbol)], broker_queue, ticker_condition, broker_condition, daemon=True))
+        tickers.append(Ticker(symbol, ticker_queues[watchlist.index(symbol)], broker_queue, ticker_condition, broker_condition, daemon=True))
     for t in tickers:
         # each thread should first initialize the ticker, then start waiting for the signal from the data retriever
         t.start()
