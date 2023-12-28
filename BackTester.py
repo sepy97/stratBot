@@ -119,23 +119,30 @@ def printTrade(trade):
     if (trade['direction'] == util.TickerStatus.LONG):
         dir = 'Long'
         gain_pct = 100*(trade['exitPrice']/trade['entryPrice']-1)
+        entryPriceLine = str(-1*trade['entryPrice'])
+        exitPriceLine = str(trade['exitPrice'])
     else:
         dir = 'Short'
         gain_pct = 100*(1- trade['exitPrice']/trade['entryPrice'])
+        entryPriceLine = str(trade['entryPrice'])
+        exitPriceLine = str(-1*trade['exitPrice'])
     print("----------\n")
-    print('Symbol: ' + trade['symbol'] + '\n')
-    print('Entered: ' + dir + ' at ' + str(trade['entryPrice']) + ' on ' + entryTime.__str__() + '\n')
-    print('Exited: ' + ' at ' + str(trade['exitPrice']) + ' on ' + exitTime.__str__() + '\n')
+    print('Symbol: ' + trade['symbol'])
+    print('Entered: ' + dir + ' at ' + str(trade['entryPrice']) + ' on ' + entryTime.__str__())
+    print('Exited: ' + ' at ' + str(trade['exitPrice']) + ' on ' + exitTime.__str__())
     print(f"Gain = {gain_pct:.2f}% \n")
+    entryLine = entryTime.__str__() + ", " + trade['symbol'] + ", " + entryPriceLine + ", " + exitPriceLine + ", " + exitTime.__str__() + "\n"
+    with open('Log.csv', 'a') as logFile:
+        logFile.write(entryLine)
 
 
 
 #TDSession = session.initTDSession()
 session = alpaca_chart.initSession()
 
-startDay = datetime.timestamp(datetime(2022, 2, 1, 6, 30, 0))
-endDay = datetime.timestamp(datetime(2022, 3, 25, 6, 30, 0))
-symbol = "SPY"
+startDay = datetime.timestamp(datetime(2023, 3, 29, 21, 0, 0)) # use 9pm of previous day - in UTC this is equivalent to 4am PST next day
+endDay = datetime.timestamp(datetime(2023, 7, 1, 6, 30, 0))
+symbol = "TEVA"
 direction = util.TickerStatus.SHORT
 trades = []
 #data = TDSession.get_price_history(symbol=symbol, start_date=startDay.timestamp()*1000, end_date=endDay.timestamp()*1000, frequency_type="daily", frequency=1, extended_hours=False)

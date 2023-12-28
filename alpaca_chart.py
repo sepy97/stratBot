@@ -1,5 +1,5 @@
 from alpaca.data import StockHistoricalDataClient
-from datetime import datetime
+from datetime import datetime, timezone
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca_config import alpaca_config
@@ -15,8 +15,8 @@ def getChart(stock_client, symbol, timeframe_sym, start_timestamp, end_timestamp
     if timeframe_sym == 'd':
         tf = TimeFrame.Day
     
-    start_time = datetime.utcfromtimestamp(start_timestamp)
-    end_time = datetime.utcfromtimestamp(end_timestamp)
+    start_time = datetime.fromtimestamp(start_timestamp, timezone.utc)
+    end_time = datetime.fromtimestamp(end_timestamp, timezone.utc)
 
     request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf, start=start_time, end=end_time)
     bars = stock_client.get_stock_bars(request_params)
