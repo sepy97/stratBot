@@ -11,20 +11,24 @@ class MainClock:
     def __init__(self): 
         self.candleFlipped = {"Y": False, "Q": False, "M": False, "W": False, "D": False, "M60": False, "M30": False, "M15": False}
         self.internalStopEvent = True
+        self.timeQuantAlert = threading.Condition()
+        self.NextAlertThread = None
 
     def __str__(self):
         return "MainClock, time is " + datetime.now()
     
+    def getTimeQuantAlert(self):
+        return self.timeQuantAlert
+    
     def startClock(self, stop_event):
         self.internalStopEvent = False
-        self.timeQuantAlert = threading.Condition()
         #self.candleFlipAlert = threading.Condition()
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
         print(current_time, ": Starting clock")
         self.scheduleAlert(stop_event)
         #return (self.timeQuantAlert, self.candleFlipAlert)
-        return self.timeQuantAlert
+        return #self.timeQuantAlert
 
     def scheduleAlert(self, stop_event):
         if not stop_event.is_set() and not self.internalStopEvent:  # TODO: ideally this should be done via some sort of interrupt (like exception) otherwise this won't exit as soon as event is set
@@ -37,20 +41,28 @@ class MainClock:
                 current_time = now.strftime("%H:%M:%S")
                 print(current_time, ": Issued regular time quant alert")
             # Schedule next iteration
-            threading.Timer(TIME_QUANT_SEC, self.scheduleAlert, args=(stop_event, )).start()  # Schedule the next execution after TIME_QUANT_SEC seconds
-        else:
-            now = datetime.now()
-            current_time = now.strftime("%H:%M:%S")
-            print(current_time, ": No more updates scheduled")
+            self.NextAlertThread = threading.Timer(TIME_QUANT_SEC, self.scheduleAlert, args=(stop_event, ))
+            self.NextAlertThread.start()  # Schedule the next execution after TIME_QUANT_SEC seconds
+        #else:
+            #self.stopClock()
+            #now = datetime.now()
+            #current_time = now.strftime("%H:%M:%S")
+            #print(current_time, ": No more updates scheduled")
         return
     
     def stopClock(self):
+        if self.NextAlertThread is not None:
+            now = datetime.now()
+            current_time = now.strftime("%H:%M:%S")
+            print(current_time, ": Stopping next alert thread")
+            self.NextAlertThread.cancel()
         with self.timeQuantAlert:
             self.timeQuantAlert.notify_all()
         self.internalStopEvent = True
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
         print(current_time, ": Stopping clock via internal call")
+
         return 
     
     # TODO: check if this time corresponds to new candle, i.e. previous time quant belongs to different candle than current time quant: 

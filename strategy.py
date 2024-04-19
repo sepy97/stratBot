@@ -75,3 +75,6 @@ class Strategy:
                             return False
                     exit_logger.logger.info("Exit signal detected on pattern " + p + ": " + self.exit[p])
         return True
+
+    def isAS(self, sym, TF):
+        return False
