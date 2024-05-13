@@ -221,3 +221,11 @@ def detectTFFlip(current_time, TFperiod, time_quant):
     if modulo < time_quant*1000:
         return True
     return False
+
+def getProperStartTime(current_time, time_quant):
+    # TODO: check for the day to be a trading day
+    opening_time = getTodayOpenTime_ms()
+    time_quant_ms = time_quant*1000
+    delta = int (1000*current_time.timestamp()) - opening_time
+    proper_start_time = datetime.fromtimestamp((opening_time + (delta//time_quant_ms + 1)*time_quant_ms)/1000)
+    return proper_start_time
