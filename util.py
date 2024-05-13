@@ -211,3 +211,13 @@ def moveLogs(destPath=None, tzone="America/Los_Angeles"):
     cloudDir = str(destPath+dt.strftime("%Y-%m-%d")+"/"+dt.strftime("%H.%M.%S"))
     os.system("mkdir -p "+cloudDir)
     os.system(str("mv *.log "+cloudDir))
+
+def detectTFFlip(current_time, TFperiod, time_quant):
+    #opening_time = getOpenCloseAtDay(int(1000*current_time.timestamp()))["open"]
+    opening_timestamp = getTodayOpenTime_ms()
+    current_timestamp = int(1000*current_time.timestamp())
+    delta = current_timestamp - opening_timestamp
+    modulo = delta % TFperiod
+    if modulo < time_quant*1000:
+        return True
+    return False
