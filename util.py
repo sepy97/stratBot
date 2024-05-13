@@ -62,6 +62,12 @@ def getTodayCloseTime_ms():
     todayDataFrame = nyse.schedule(str(datetime.now().date()), str(datetime.now().date()))
     closeTime = todayDataFrame.iloc[-1]['market_close']
     return int(closeTime*1000)
+def getTodayOpenTime_ms():
+    # TODO: check if it is not a trading day
+    nyse = mcal.get_calendar('NYSE')
+    todayDataFrame = nyse.schedule(str(datetime.now().date()), str(datetime.now().date()))
+    openTime = todayDataFrame.iloc[-1]['market_open']
+    return int(openTime.timestamp()*1000)
 
 def getStartOf3Candles(endTime_ms, timeframe):
     # Get period of time required to cover 4 candles worth of data for given timeframe ending at specific endTime  
