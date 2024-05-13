@@ -1,123 +1,43 @@
 import threading
-import util
 from apscheduler.schedulers.background import BackgroundScheduler
 import queue
 import time
 import alpaca_chart
 
-from alpaca.data.requests import StockBarsRequest
-from alpaca.data.requests import StockLatestQuoteRequest
-from alpaca.data.requests import StockLatestBarRequest
-from alpaca.data.timeframe import TimeFrame
 from datetime import datetime, timedelta
 
-import pandas as pd
+import util
+from Broker import Broker
+from DataRetrieval import DataRetrieval
+from Ticker import Ticker
+from strategy import Strategy
+import session
 
-class DataRetrieval(threading.Thread):
-    def __init__(self, session, watchlist, input_queue, output_queues, DR_condition, ticker_condition, *args, **kwargs):
-        super(DataRetrieval, self).__init__(*args, **kwargs)
-        self._stopper = threading.Event()
-        self.session = session
-        self.watchlist = watchlist
-        self.input_queue = input_queue
-        self.output_queues = output_queues
-        self.DR_condition = DR_condition
-        self.ticker_condition = ticker_condition
-
-    def stopThr(self):
-        self._stopper.set()
-
-    def stopped(self):
-        return self._stopper.is_set()
-
-    def run(self):
-        while True:
-            if self.stopped():
-                break
-            with self.DR_condition:
-                self.DR_condition.wait()
-            self.watchlist = self.input_queue.get(timeout=1)
-
-            request_params = StockLatestBarRequest(symbol_or_symbols=self.watchlist, timeframe=TimeFrame.Minute)
-            bars = session.get_stock_latest_bar(request_params)
-
-            for symbol in self.watchlist:
-                self.output_queues[self.watchlist.index(symbol)].put(bars[symbol])
-            # rewrite this loop with map
-            # map(lambda s: self.output_queues[self.watchlist.index(s)].put(s), self.watchlist)
-            with self.ticker_condition:
-                self.ticker_condition.notify_all()
-        return
-
-class Broker(threading.Thread):
-    def __init__(self, input_queue, broker_condition, *args, **kwargs):
-        super(Broker, self).__init__(*args, **kwargs)
-        self._stopper = threading.Event()
-        self.input_queue = input_queue
-        self.broker_condition = broker_condition
-
-    def stopThr(self):
-        self._stopper.set()
-
-    def stopped(self):
-        return self._stopper.is_set()
-
-    def run(self):
-        while True:
-            if self.stopped():
-                break
-            with self.broker_condition:
-                self.broker_condition.wait()
-            while not self.input_queue.empty():
-                symbol = self.input_queue.get(timeout=1)
-                print(f"Broker got {symbol}", flush=True)
-        return
-
-class Ticker(threading.Thread):
-        def __init__(self, symbol, input_queue, output_queue, ticker_condition, broker_condition, *args, **kwargs):
-            super(Ticker, self).__init__(*args, **kwargs)
-            self._stopper = threading.Event()
-            self.input_queue = input_queue
-            self.output_queue = output_queue
-            self.ticker_condition = ticker_condition
-            self.broker_condition = broker_condition
-            self.symbol = symbol
-
-        def stopThr(self):
-            self._stopper.set()
-
-        def stopped(self):
-            return self._stopper.is_set()
-
-        def run(self):
-            while True:
-                if self.stopped():
-                    break
-                with self.ticker_condition:
-                    self.ticker_condition.wait()
-                quote = self.input_queue.get(timeout=1)
-                print(f"Ticker received quote {quote} for symbol {self.symbol}", flush=True)
-                self.output_queue.put(self.symbol)
-                with self.broker_condition:
-                    self.broker_condition.notify()
-            return
-
-def scheduleDataRetrieval(symbols, output_queue, DR_condition):
-    # append symbols to the output queue
-    output_queue.put(symbols)
-    print("Data retrieval scheduled", flush=True)
+def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, opening_time, time_quant=5):
+    current_time = datetime.now()
+    DR_queue.put(symbols)
     with DR_condition:
         DR_condition.notify()
+    #print("Data retrieval signal sent", flush=True)
+    for t in TF:
+        TF[t] = False
+        if candle_flipped := util.detectTFFlip(current_time, util.timeframe_LUT[t][0], time_quant):
+            TF[t] = True
+            print(f"Timeframe {t} flipped: {candle_flipped} at time {current_time}", flush=True)
+    with TF_condition:
+        TF_condition.notify_all()
+    #print("Timeframe signal sent to all tickers", flush=True)
     return
 
 # entry point for the program
 if __name__ == '__main__':
+    # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
     # load watchlist from config file
     #watchlist = util.loadSymbols()
-    watchlist = ["QQQ", "SQQQ", "TSLA", "AAPL"]
+    watchlist = ["TSLA", "AAPL", "QQQ", "SQQQ"]
     session = alpaca_chart.initSession()
 
-    # create global queues for scheduled data retrieval, for data of tickers, and for signals to broker
+    # create global queues for scheduled data retrieval, for data with tickers quotes, and for signals to broker
     DR_queue = queue.Queue()
     DR_condition = threading.Condition()
     ticker_queues = []
@@ -126,6 +46,10 @@ if __name__ == '__main__':
         ticker_queues.append(queue.Queue())
     broker_queue = queue.Queue()
     broker_condition = threading.Condition()
+    # TF is a dictionary of timeframes and boolean values that indicate if the timeframe is flipped; initialized by True for all timeframes
+    TF = {"m5": True, "m15": True, "m30": True, "m60": True, "d": True, "w": True, "m": True, "q": True}
+    TF_condition = threading.Condition()
+    time_quant = 5 # interval (in seconds) before the next data retrieval and trigger checks
 
     # authorize data retriever
     data_retriever = DataRetrieval(session, watchlist, DR_queue, ticker_queues, DR_condition, ticker_condition, daemon=True)
@@ -140,81 +64,33 @@ if __name__ == '__main__':
     # get tickers from watchlist, create an iterable collection of threads, and start threads for each ticker
     tickers = []
     for symbol in watchlist:
-        tickers.append(Ticker(symbol, ticker_queues[watchlist.index(symbol)], broker_queue, ticker_condition, broker_condition, daemon=True))
+        t = Ticker(symbol, ticker_queues[watchlist.index(symbol)], TF, broker_queue, ticker_condition, TF_condition, broker_condition, daemon=True)
+        t.strategies.append(Strategy()) #util.loadStrategies()
+        data = data_retriever.get_initial_data(symbol, ["m5", "m15", "m30", "m60", "d", "w", "m", "q"])
+        t.initializeCandles(data)
+        tickers.append(t)
     for t in tickers:
         # each thread should first initialize the ticker, then start waiting for the signal from the data retriever
         t.start()
 
     # create global APScheduler and schedule data retrieval (by function that adds signal to the queue) every 5 seconds
     scheduler = BackgroundScheduler()
-    scheduler.add_job(lambda:scheduleDataRetrieval(watchlist, DR_queue, DR_condition), 'interval', seconds=5, timezone="America/Los_Angeles")
+    proper_start_time = util.getProperStartTime(datetime.now(), time_quant)
+    print(f"Proper start time: {proper_start_time}")
+    print(f"Opening time: {datetime.fromtimestamp(util.getTodayOpenTime_ms()//1000)}")
+    scheduler.add_job(lambda:scheduling(watchlist, DR_queue, DR_condition, TF, TF_condition, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
     scheduler.start()
 
-    time.sleep(60)
+    time.sleep(6000)
 
     # finish all threads while saving the state of the program
     data_retriever.stopThr()
-    #data_retriever.join()
     broker.stopThr()
-    #broker.join()
     # export the watchlist
     #util.exportWatchlist()
     for t in tickers:
         # save the state of each ticker?
         t.stopThr()
-        #t.join()
 
     print ("FINISHING the scheduler!")
     scheduler.shutdown(wait=False)
-
-
-
-
-
-if False:
-
-    # Import the client
-    #from td.client import TDClient
-    import datetime
-    import time
-    import ticker
-    import session
-    import updater
-    import util
-
-    from concurrent.futures import ThreadPoolExecutor
-    from apscheduler.schedulers.background import BackgroundScheduler
-    from apscheduler.triggers.interval import IntervalTrigger
-
-    # Create a new session, credentials path is required.
-    TDSession = session.initTDSession()
-
-    # Init all tickers from the watchlist saved in config file
-    list_of_tickers = util.loadSymbols()
-    watchlist = dict(map(lambda t: (t, ticker.Ticker(t, TDSession)), list_of_tickers))
-
-    # Schedule tickers update to run every 5 seconds
-
-    executor = ThreadPoolExecutor()
-
-    scheduler = BackgroundScheduler()
-    scheduler.start()
-    #for t in watchlist:
-    #    scheduler.add_job(watchlist[t].update, executors = {'threadpoolexec',executor}, trigger=IntervalTrigger(seconds=5, timezone="America/Los_Angeles"), id = t)
-
-
-    u = updater.Updater(TDSession)
-    u.loadStrategy("Bullish reversal 2-2")
-    u.run()
-    time.sleep(6)#*60)
-    u.addSymbol("QQQ")
-    u.addSymbol("SQQQ")
-    u.addSymbol("TSLQ") # TSLA inverse -- got an error; probably, because not enough data for yearly/quarterly period
-    u.addSymbol("TSLA")
-    time.sleep(8*60*60) # just for hawaii
-    u.stop()
-    print("Updater is done!\nMoving logs...")
-    util.moveLogs()
-    print("Finished!")
-    time.sleep(1)
-
