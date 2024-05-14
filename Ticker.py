@@ -77,8 +77,6 @@ class Ticker(threading.Thread):
     def createCandle (self, price, timestamp):
         # Insert new candle into the candle list if necessary
         for tf in self.TF:
-            if (tf == 'q' or tf == 'm' or tf == 'w' or tf == 'd'): # @@@TEMPORARY
-                continue
             if self.TF[tf]:
                 candles = self.candles[tf]
                 if candles is None:
@@ -93,8 +91,6 @@ class Ticker(threading.Thread):
     def updateClose(self, close_price):
         # Update close prices of live candles
         for t in self.candles.keys():
-            if (t == 'q' or t == 'm' or t == 'w' or t == 'd'): # @@@TEMPORARY
-                continue
             if self.candles[t] is None:
                 continue
             self.candles[t][0].close = close_price
@@ -102,8 +98,6 @@ class Ticker(threading.Thread):
     def updateHighLow(self, price):
         # Update high and low of live candles if necessary
         for t in self.candles.keys():
-            if (t == 'q' or t == 'm' or t == 'w' or t == 'd'): # @@@TEMPORARY
-                continue
             if self.candles[t] is None:
                 continue
             if price > self.candles[t][0].high:
@@ -114,8 +108,6 @@ class Ticker(threading.Thread):
     def initializeCandles(self, bars):
         # Initialize candles for all timeframes
         for t in self.TF:
-            if (t == 'q' or t == 'm' or t == 'w' or t == 'd'): # @@@TEMPORARY
-                continue
             bars_t = bars[t]
             self.candles[t] = self.get_candle_given_data(bars_t)
 

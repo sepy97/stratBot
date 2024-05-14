@@ -4,7 +4,7 @@ import alpaca.data.enums
 from alpaca.data import StockLatestBarRequest, TimeFrame, TimeFrameUnit
 from alpaca.data.requests import StockBarsRequest
 from alpaca.common.enums import Sort
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class DataRetrieval(threading.Thread):
     def __init__(self, session, watchlist, input_queue, output_queues, DR_condition, ticker_condition, *args, **kwargs):
@@ -50,26 +50,39 @@ class DataRetrieval(threading.Thread):
             match tf:
                 case "m5":
                     timeframe = TimeFrame(5, TimeFrameUnit.Minute)
+                    enddate = None
+                    startdate = None
                 case "m15":
                     timeframe = TimeFrame(15, TimeFrameUnit.Minute)
+                    enddate = None
+                    startdate = None
                 case "m30":
                     timeframe = TimeFrame(30, TimeFrameUnit.Minute)
+                    enddate = None
+                    startdate = None
                 case "m60":
                     timeframe = TimeFrame.Hour
+                    enddate = None
+                    startdate = None
                 case "d":
-                    return bars
-                    #timeframe = TimeFrame.Day
+                    timeframe = TimeFrame.Day
+                    enddate = curdatetime
+                    startdate = curdatetime - timedelta(days=10) # 10 days (including weekends) ago
+                    # TODO: detect last trading day and adjust startdate accordingly 5 days from the last trading day)
                 case "w":
-                    return bars
-                    #timeframe = TimeFrame.Week
+                    timeframe = TimeFrame.Week
+                    enddate = curdatetime
+                    startdate = curdatetime - timedelta(days=5*7) # 5 weeks ago
                 case "m":
-                    return bars
-                    #timeframe = TimeFrame.Month
+                    timeframe = TimeFrame.Month
+                    enddate = curdatetime
+                    startdate = curdatetime - timedelta(days=5*30) # 5 months ago
                 case "q":
-                    return bars
-                    #timeframe = TimeFrame(3, TimeFrameUnit.Month)
+                    timeframe = TimeFrame(3, TimeFrameUnit.Month)
+                    enddate = curdatetime
+                    startdate = curdatetime - timedelta(days=5*90) # 5 quarters ago
             #TODO: check if timeframe is correct
-            request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=timeframe, end=curdatetime, sort=Sort.DESC)
+            request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=timeframe, start=startdate, end=enddate, sort=Sort.DESC)
             data = self.session.get_stock_bars(request_params)[symbol]
             bars[tf] = data[-4:]
 
