@@ -1,74 +1,26 @@
 [[strategies]]
-name = "Bullish reversal"
+name = "Weighted strat"
 type = "Long"
 
-[strategies.patterns]
-m5 = "2D-1-2U"
-m15 = "2U"
-d = "2U"
+[strategies.weights]
+1h = 1
+1d = 1
+1w = 1
+1m = 1
 
-[strategies.tfc]
-m60 = "G"
-d = "G"
-w = "G"
-
-[strategies.exit]
-type = "counter-reversal"
-m5 = "2U-1-2D"
-
-
-[[strategies]]
-name = "Bullish reversal simple"
-type = "Long"
-
-[strategies.patterns]
-m5 = "2D-1-2U"
-d = "2U"
-
-[strategies.tfc]
-m60 = "G"
-d = "G"
-w = "G"
+[strategies.penalties]
+1h = -1
+1d = -2
+1w = -3
+1m = -4
 
 [strategies.exit]
-type = "counter-reversal"
-m5 = "2U-1-2D"
-
-
-[[strategies]]
-name = "Bearish reversal simple"
-type = "Short"
-
-[strategies.patterns]
-m5 = "2U-1-2D"
-d = "2D"
+type = "counter-trend"
+1h = -1
 
 [strategies.tfc]
-m60 = "R"
-d = "R"
-w = "R"
+# TODO: not quite sure what to have here
 
-[strategies.exit]
-type = "counter-reversal"
-m5 = "2D-1-2U"
-
-
-[[strategies]]
-name = "Bullish reversal 2-2"
-type = "Long"
-
-[strategies.patterns]
-m5 = "2U-2D"
-d = "2U"
-
-[strategies.tfc]
-m60 = "G"
-d = "G"
-w = "G"
-
-[strategies.exit]
-type = "counter-reversal"
-m5 = "2D-2U"
 
 
 [paths]
