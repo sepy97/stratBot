@@ -36,7 +36,7 @@ class DataRetrieval(threading.Thread):
 
             for symbol in self.watchlist:
                 self.output_queues[self.watchlist.index(symbol)].put(bar[symbol].close)
-            # rewrite this loop with map
+            # TODO: rewrite this loop with map
             # map(lambda s: self.output_queues[self.watchlist.index(s)].put(s), self.watchlist)
             with self.ticker_condition:
                 self.ticker_condition.notify_all()
