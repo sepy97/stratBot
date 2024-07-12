@@ -27,23 +27,24 @@ class DataRetrieval(threading.Thread):
         while True:
             if self.stopped():
                 break
+            # waiting for the signal from the main thread (scheduler)
             with self.DR_condition:
                 self.DR_condition.wait()
             self.watchlist = self.input_queue.get(timeout=1)
-
+            # API request
             request_params = StockLatestBarRequest(symbol_or_symbols=self.watchlist, timeframe=TimeFrame.Minute)
             bar = self.session.get_stock_latest_bar(request_params)
-
+            # for now, bar data is being put into the output queues in a for-loop
+            # TODO: Use map function to put bar data into output queues
             for symbol in self.watchlist:
                 self.output_queues[self.watchlist.index(symbol)].put(bar[symbol].close)
-            # TODO: rewrite this loop with map
             # map(lambda s: self.output_queues[self.watchlist.index(s)].put(s), self.watchlist)
             with self.ticker_condition:
                 self.ticker_condition.notify_all()
         return
 
     def get_initial_data(self, symbol, tfs):
-        # request Stock Bars for th last 3 periods for each timeframe
+        # request Stock Bars for the last 3 periods for each timeframe
         curdatetime = datetime.now()
         bars = {}
         for tf in tfs:

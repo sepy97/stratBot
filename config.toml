@@ -1,22 +1,23 @@
 [[strategies]]
 name = "Weighted strat"
 type = "Long"
+threshold = 3
 
 [strategies.weights]
-1h = 1
-1d = 1
-1w = 1
-1m = 1
+m60 = 1
+d = 1
+w = 1
+m = 1
 
 [strategies.penalties]
-1h = -1
-1d = -2
-1w = -3
-1m = -4
+m60 = -1
+d = -2
+w = -3
+m = -4
 
 [strategies.exit]
 type = "counter-trend"
-1h = -1
+m60 = -1
 
 [strategies.tfc]
 # TODO: not quite sure what to have here

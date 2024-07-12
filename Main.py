@@ -38,12 +38,17 @@ if __name__ == '__main__':
     session = alpaca_chart.initSession()
 
     # create global queues for scheduled data retrieval, for data with tickers quotes, and for signals to broker
+    # each queue is used for communication between different threads
+    # in the DR_queue each element is the current "watchlist"
     DR_queue = queue.Queue()
     DR_condition = threading.Condition()
+    # there are multiple ticker queues, one queue for each ticker in the watchlist
     ticker_queues = []
     ticker_condition = threading.Condition()
     for t in watchlist:
+        # each element of the ticker queue is the current (for the time period) price that DR receives
         ticker_queues.append(queue.Queue())
+    # broker queue contains symbols that should be traded
     broker_queue = queue.Queue()
     broker_condition = threading.Condition()
     # TF is a dictionary of timeframes and boolean values that indicate if the timeframe is flipped; initialized by True for all timeframes

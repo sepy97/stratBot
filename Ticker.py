@@ -37,11 +37,13 @@ class Ticker(threading.Thread):
         while True:
             if self.stopped():
                 break
+            # waiting for update signal from DR (to receive the stock quote)
             with self.ticker_condition:
                 self.ticker_condition.wait()
             update_time = datetime.now()
             quote = self.input_queue.get(timeout=1)
             #print(f"Ticker received quote {quote} for symbol {self.symbol}", flush=True)
+            # waiting for update signal from the main thread (scheduler) about timeframe flips
             with self.TF_condition:
                 self.TF_condition.wait()
             self.update(quote, update_time.timestamp())
@@ -75,7 +77,7 @@ class Ticker(threading.Thread):
         self.createCandle(quote, timestamp)
 
     def createCandle (self, price, timestamp):
-        # Insert new candle into the candle list if necessary
+        # Insert new candle into the candle list if necessary (if timeframe is flipped)
         for tf in self.TF:
             if self.TF[tf]:
                 candles = self.candles[tf]
