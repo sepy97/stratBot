@@ -26,6 +26,8 @@ class Ticker(threading.Thread):
         self.stopPrice = 0.0
         self.targetPrice = 0.0
         self.strategies = []
+        self.logger = util.strat_logger("Ticker_"+self.symbol, "strat_"+self.symbol+".log")
+        self.logger.logger.debug("Ticker created: " + str(self))
 
     def stopThr(self):
         self._stopper.set()
@@ -42,23 +44,25 @@ class Ticker(threading.Thread):
                 self.ticker_condition.wait()
             update_time = datetime.now()
             quote = self.input_queue.get(timeout=1)
-            #print(f"Ticker received quote {quote} for symbol {self.symbol}", flush=True)
             # waiting for update signal from the main thread (scheduler) about timeframe flips
             with self.TF_condition:
                 self.TF_condition.wait()
+            self.logger.logger.debug("Received quote: " + str(quote))
             self.update(quote, update_time.timestamp())
-            print(f"Ticker {self.symbol} updated at {update_time}", flush=True)
-            dumpstr = f"Ticker {self.symbol} candles: "
+            dumpstr = f"Ticker {self.symbol} has candles at time {update_time}: "
             for t in self.candles:
                 dumpstr += f"{t}:"
                 for c in self.candles[t]:
                     dumpstr += f"{c} "
                 dumpstr += "\n"
-            print(dumpstr, flush=True)
             self.lastUpdated = update_time
+            self.logger.logger.debug(dumpstr)
             # TODO: iterate over strategies, update AS that involve flipped TFs, check triggers, and, if triggered, issue signals to broker
             for s in self.strategies:
                 status = s.checkScore(self.candles)
+                stratstr = f"Strategy {s.name} {s.type} got score {s.score} \n"
+                stratstr += f"Compared to threshold {s.threshold} and resulted in status {status}"
+                self.logger.logger.debug(stratstr)
                 # TODO: change the status of the ticker
             # for now, just send the symbol to the broker
             self.output_queue.put(self.symbol)

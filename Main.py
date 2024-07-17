@@ -101,6 +101,7 @@ if __name__ == '__main__':
     for t in tickers:
         # save the state of each ticker?
         t.stopThr()
-
+    print("Moving logs...")
+    util.moveLogs()
     print ("FINISHING the scheduler!")
     scheduler.shutdown(wait=False)
