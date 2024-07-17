@@ -229,3 +229,8 @@ def getProperStartTime(current_time, time_quant):
     delta = int (1000*current_time.timestamp()) - opening_time
     proper_start_time = datetime.fromtimestamp((opening_time + (delta//time_quant_ms + 1)*time_quant_ms)/1000)
     return proper_start_time
+
+def loadStrategies():
+    dic = tomlkit.loads(Path("config.toml").read_text())
+    strategies = dic.get("strategies", [])
+    return strategies

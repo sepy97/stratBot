@@ -70,7 +70,12 @@ if __name__ == '__main__':
     tickers = []
     for symbol in watchlist:
         t = Ticker(symbol, ticker_queues[watchlist.index(symbol)], TF, broker_queue, ticker_condition, TF_condition, broker_condition, daemon=True)
-        t.strategies.append(Strategy()) #util.loadStrategies()
+        strategies = util.loadStrategies()
+        for s in strategies:
+            strategy = Strategy()
+            strategy.stratFromDict(s)
+            t.strategies.append(strategy)
+        #t.strategies.append(Strategy())
         data = data_retriever.get_initial_data(symbol, ["m5", "m15", "m30", "m60", "d", "w", "m", "q"])
         t.initializeCandles(data)
         tickers.append(t)

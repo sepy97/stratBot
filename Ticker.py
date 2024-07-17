@@ -58,8 +58,7 @@ class Ticker(threading.Thread):
             self.lastUpdated = update_time
             # TODO: iterate over strategies, update AS that involve flipped TFs, check triggers, and, if triggered, issue signals to broker
             for s in self.strategies:
-                s.updateAS(self.candles, self.TF)
-                status = s.checkTrigger(self.candles)
+                status = s.checkScore(self.candles)
                 # TODO: change the status of the ticker
             # for now, just send the symbol to the broker
             self.output_queue.put(self.symbol)
