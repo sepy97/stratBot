@@ -10,6 +10,7 @@ class Strategy:
         self.exit_condition = None
         self.threshold = 0
         self.AS = []
+        self.inForce = []
         self.status = util.TickerStatus.OUT
 
     def stratFromDict(self, data):
@@ -32,6 +33,25 @@ class Strategy:
             return
         else:
             return
+    # In Force means AS triggered. TODO: how to deal with AS that triggered and failed? 
+    def inForce(self, candles):
+        #   Long: 1-2u, 2d-2u 
+        if self.type == "Long":
+            for tf in (self.weights).keys():
+                if candles[tf][0].get_kind() == "2" and candles[tf][0].get_subtype() == "U" and \
+                    (candles[tf][1].get_kind() == "1" or (candles[tf][1].get_kind() == "2" and candles[tf][1].get_subtype() != "D")):
+                    self.inForce[tf] = True
+                else:
+                    self.inForce[tf] = False
+        #   Short: 1-2d, 2u-2d
+        else:
+            for tf in (self.weights).keys():
+                if candles[tf][0].get_kind() == "2" and candles[tf][0].get_subtype() == "D" and \
+                    (candles[tf][1].get_kind() == "1" or (candles[tf][1].get_kind() == "2" and candles[tf][1].get_subtype() != "U")):
+                    self.inForce[tf] = True
+                else:
+                    self.inForce[tf] = False
+
 
     def checkScore(self, data):
         self.score = 0
