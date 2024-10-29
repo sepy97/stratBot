@@ -34,7 +34,7 @@ if __name__ == '__main__':
     # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
     # load watchlist from config file
     #watchlist = util.loadSymbols()
-    watchlist = ["TSLA", "AAPL", "QQQ", "SQQQ"]
+    watchlist = ["TSLA", "AAPL", "QQQ", "SQQQ", "OKLO", "DJT", "NVDA", "HUM", "ABBV", "UNH", "RCL", "CCL", "NCLH"]
     session = alpaca_chart.initSession()
 
     # create global queues for scheduled data retrieval, for data with tickers quotes, and for signals to broker
