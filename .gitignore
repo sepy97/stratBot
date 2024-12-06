@@ -3,3 +3,4 @@
 config.py
 td_state.json
 *.log
+alpaca_config.py

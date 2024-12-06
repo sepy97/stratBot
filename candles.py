@@ -10,7 +10,10 @@ class Candle:
         self.previous_low = prev_low
     
     def __str__(self):
-        return "Date: " + str(self.timestamp_ms) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close)
+        return "Date: " + str(self.timestamp_ms) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + "\n"
+    
+    def __repr__(self):
+        return "Date: " + str(self.timestamp_ms) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + "\n"
     
     def get_kind(self):
         # Return candle kind, either 1, 2 or 3
@@ -89,4 +92,4 @@ class Candle:
         #if (self.get_subtype()==None):
         #    print ("Error: subtype is None!")
         #    return self.get_kind()
-        return self.get_kind() + self.get_subtype()
+        return self.get_kind() + self.get_subtype() + self.get_direction()
