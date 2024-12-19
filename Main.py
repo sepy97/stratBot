@@ -18,7 +18,6 @@ def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, opening_time, 
     DR_queue.put(symbols)
     with DR_condition:
         DR_condition.notify()
-    #print("Data retrieval signal sent", flush=True)
     for t in TF:
         TF[t] = False
         if candle_flipped := util.detectTFFlip(current_time, util.timeframe_LUT[t][0], time_quant):
@@ -26,7 +25,6 @@ def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, opening_time, 
             print(f"Timeframe {t} flipped: {candle_flipped} at time {current_time}", flush=True)
     with TF_condition:
         TF_condition.notify_all()
-    #print("Timeframe signal sent to all tickers", flush=True)
     return
 
 # entry point for the program
@@ -34,7 +32,7 @@ if __name__ == '__main__':
     # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
     # load watchlist from config file
     #watchlist = util.loadSymbols()
-    watchlist = ["TSLA", "AAPL", "QQQ", "SQQQ", "OKLO", "DJT", "NVDA", "HUM", "ABBV", "UNH", "RCL", "CCL", "NCLH"]
+    watchlist = ["TSLA", "AAPL", "QQQ", "SQQQ", "OKLO", "DJT", "NVDA", "ABBV",  "CCL", "NCLH"] #"RCL",HUM, "UNH" gives an error
     session = alpaca_chart.initSession()
 
     # create global queues for scheduled data retrieval, for data with tickers quotes, and for signals to broker
@@ -91,7 +89,7 @@ if __name__ == '__main__':
     scheduler.add_job(lambda:scheduling(watchlist, DR_queue, DR_condition, TF, TF_condition, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
     scheduler.start()
 
-    time.sleep(6000)
+    time.sleep(20000) # approximately a whole trading day
 
     # finish all threads while saving the state of the program
     data_retriever.stopThr()

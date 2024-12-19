@@ -59,13 +59,15 @@ class Ticker(threading.Thread):
             self.logger.logger.debug(dumpstr)
             # TODO: iterate over strategies, update AS that involve flipped TFs, check triggers, and, if triggered, issue signals to broker
             for s in self.strategies:
-                status = s.checkScore(self.candles)
-                stratstr = f"Strategy {s.name} {s.type} got score {s.score} \n"
-                stratstr += f"Compared to threshold {s.threshold} and resulted in status {status}"
-                self.logger.logger.debug(stratstr)
-                # TODO: change the status of the ticker
-            # for now, just send the symbol to the broker
-            self.output_queue.put(self.symbol)
+                status = s.checkSignal(self.candles)
+                if status:
+                    stratstr = f"Strategy {s.name} {s.type} got a signal\n"
+                    self.logger.logger.debug(stratstr)
+                    # TODO: change the status of the ticker
+                    # for now, just send the symbol to the broker
+                    self.output_queue.put(self.symbol)
+                else:
+                    stratstr = f"Strategy {s.name} {s.type} got NO signal\n"
             with self.broker_condition:
                 self.broker_condition.notify()
         return
