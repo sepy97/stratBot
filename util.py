@@ -192,16 +192,26 @@ def getCandleChange_ms(timestamp_ms, timeframe):
     nextCandleStartTimeStamp_ms = int(1000*scheduleNextPeriod.iloc[0]['market_open'].timestamp())
     return candleEndTimeStamp_ms, nextCandleStartTimeStamp_ms
 
+# Function that loads the watchlist from config.toml
 def loadSymbols():
-    symbols = []
-
     dic = tomlkit.loads(Path("config.toml").read_text())
-    if "watchlist" in dic:
-        for element in dic["watchlist"]:
-            symbols.append(element["symbol"])
-    else:
+    watchlist = dic.get("watchlist", [])
+    # Use filter to exclude elements from the watchlist that don't have a "symbol" key.
+    # Use map to extract the "symbol" value from the remaining elements.
+    symbols = list(map(lambda element: element["symbol"], filter(lambda e: "symbol" in e, watchlist)))
+    # TODO: send a warning if no watchlist in config.toml
+    if not symbols:
         print("No watchlist in config.toml!!!")
+
     return symbols
+
+# Function that loads the watchlist from file
+def loadWatchlist(filename):
+    watchlist = []
+    with open(filename, "r") as f:
+        for line in f:
+            watchlist.append(line.strip())
+    return watchlist
 
 def moveLogs(destPath=None, tzone="America/Los_Angeles"):
     if destPath is None:
