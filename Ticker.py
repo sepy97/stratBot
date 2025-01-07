@@ -116,6 +116,10 @@ class Ticker(threading.Thread):
         # Initialize candles for all timeframes
         for t in self.TF:
             bars_t = bars[t]
+            if bars_t is None:
+                self.candles[t] = None
+                self.logger.logger.debug(f"Ticker {self.symbol} has no bars for timeframe {t}")
+                continue
             self.candles[t] = self.get_candle_given_data(bars_t)
 
     @staticmethod

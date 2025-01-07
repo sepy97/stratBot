@@ -86,5 +86,8 @@ class DataRetrieval(threading.Thread):
             request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=timeframe, start=startdate, end=enddate, sort=Sort.DESC)
             data = self.session.get_stock_bars(request_params)[symbol]
             bars[tf] = data[-4:]
+            if (len(bars[tf]) < 4):
+                print(f"Error: Not enough data for {symbol} on {tf} timeframe!")
+                bars[tf] = None
 
         return bars
