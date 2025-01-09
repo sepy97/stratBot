@@ -1,3 +1,4 @@
+import pandas as pd
 class Candle:
     # Financial candle
     def __init__(self, timestamp_ms, open, high, low, close, prev_high, prev_low):
@@ -93,3 +94,7 @@ class Candle:
         #    print ("Error: subtype is None!")
         #    return self.get_kind()
         return self.get_kind() + self.get_subtype() + self.get_direction()
+    
+    def to_string_full(self):
+        dt = pd.to_datetime(round(self.timestamp_ms/1000), unit='s').tz_localize('America/New_York').floor('s')
+        return "Date: " + str(dt) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + " " + self.to_string() 
