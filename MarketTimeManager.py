@@ -175,7 +175,7 @@ def getProperStartTime(current_time, time_quant):
 #     For daily and instraday same approach does not work because holidays can be larger than the entire calendar period of corresponding timeframe
 #     
 
-def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1):
+def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='America/New_York'):
     candleOpenCloseTime = {'pre': [], 'current': None, 'post': []}
     nyse = mcal.get_calendar('NYSE')
     timestampDate = pd.to_datetime(timestamp_s, unit='s', utc=True).tz_convert('America/New_York')     # convert to Panda Datetime and ensure it is timezone-aware and in NY timezone
@@ -236,10 +236,8 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1):
                 candleOpenCloseTime['post'].append((candle_start, candle_end))
                 timestampAdj = candle_end
                 candles_collected += 1
-        return candleOpenCloseTime
 
-
-    if timeframe_sym=='d':
+    elif timeframe_sym=='d':
         this_period_start = timestampDate.replace(hour=0, minute=0, second=0)
         this_period_end = timestampDate.replace(hour=23, minute=59, second=59)
         period_offset = pd.DateOffset(days=1)        
@@ -266,68 +264,84 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1):
         this_sch = nyse.schedule(start_date=this_period_start, end_date=this_period_end)
         if (not this_sch.empty) and (timestampDate < this_sch.iloc[0]['market_close']) and (timestampDate >= this_sch.iloc[0]['market_open']):   # Timestamp falls within the candle - populate current candle
             candleOpenCloseTime['current'] = (this_sch.iloc[0]['market_open'], this_sch.iloc[-1]['market_close'] - pd.DateOffset(seconds=1))
-        return candleOpenCloseTime
 
-    # High Tiemframes
-    offset_pre = 1  # offset from current date to previous candles (set to 0 if timestamp is after the candle close to include this period to 'pre' list)
-    offset_post = 1
-    offset_7days = pd.DateOffset(days=7)    # used in all timeframes from Daily and longer
-    if timeframe_sym=="y":
-        this_period_start = timestampDate.replace(month=1, day=1, hour=0, minute=0, second=0)
-        this_period_end = timestampDate.replace(month=12, day=31, hour=23, minute=59, second=59)
-        period_offset = pd.DateOffset(years=1)
-    elif timeframe_sym=='q':
-        quarterStartMonth = 3*((timestampDate.month-1)//3)+1
-        quarterEndMonth = 3*((timestampDate.month-1)//3+1)
-        this_period_start = timestampDate.replace(month=quarterStartMonth, day=1, hour=0, minute=0, second=0) 
-        this_period_end = timestampDate.replace(month=quarterEndMonth, day=1, hour=23, minute=59, second=59) + pd.offsets.MonthEnd(0) 
-        period_offset = pd.DateOffset(months=3)
-    elif timeframe_sym=='m':
-        this_period_start = timestampDate.replace(day=1, hour=0, minute=0, second=0)
-        this_period_end = timestampDate.replace(day=1, hour=23, minute=59, second=59) + pd.offsets.MonthEnd(0)
-        period_offset = pd.DateOffset(months=1)
-    elif timeframe_sym=='w':
-        this_period_start = timestampDate.replace(hour=0, minute=0, second=0) - pd.Timedelta(days=timestampDate.weekday())
-        this_period_end = timestampDate.replace(hour=23, minute=59, second=59) + pd.Timedelta(days=6-timestampDate.weekday())
-        period_offset = pd.DateOffset(days=7)
+    else:
+        # Yearly, Quarterly, Monthly, Weekly
+        offset_pre = 1  # offset from current date to previous candles (set to 0 if timestamp is after the candle close to include this period to 'pre' list)
+        offset_post = 1
+        offset_7days = pd.DateOffset(days=7)    # used in all timeframes from Daily and longer
+        offset_1sec = pd.DateOffset(seconds=1)  # used to adjust the end of the candle to be 1 sec before the next candle starts
+        if timeframe_sym=="y":
+            this_period_start = timestampDate.replace(month=1, day=1, hour=0, minute=0, second=0)
+            #this_period_end = timestampDate.replace(month=12, day=31, hour=23, minute=59, second=59)
+            period_offset = pd.DateOffset(years=1)
+        elif timeframe_sym=='q':
+            quarterStartMonth = 3*((timestampDate.month-1)//3)+1
+            #quarterEndMonth = 3*((timestampDate.month-1)//3+1)
+            this_period_start = timestampDate.replace(month=quarterStartMonth, day=1, hour=0, minute=0, second=0) 
+            #this_period_end = timestampDate.replace(month=quarterEndMonth, day=1, hour=23, minute=59, second=59) + pd.offsets.MonthEnd(0) 
+            period_offset = pd.DateOffset(months=3)
+        elif timeframe_sym=='m':
+            this_period_start = timestampDate.replace(day=1, hour=0, minute=0, second=0)
+            #nextMonth_start = (this_period_start + pd.Timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0)
+            #this_period_end = nextMonth_start - pd.Timedelta(seconds=1)
+            #this_period_end = timestampDate.replace(day=1, hour=23, minute=59, second=59) + pd.offsets.MonthEnd(0)
+            period_offset = pd.DateOffset(months=1)
+        elif timeframe_sym=='w':
+            this_period_start = timestampDate.replace(hour=0, minute=0, second=0) - pd.Timedelta(days=timestampDate.weekday())
+            #this_period_end = timestampDate.replace(hour=23, minute=59, second=59) + pd.Timedelta(days=6-timestampDate.weekday())
+            period_offset = pd.DateOffset(days=7)
+        this_period_end = this_period_start + period_offset - offset_1sec
+        schedule_start = nyse.schedule(start_date=this_period_start, end_date=this_period_start+offset_7days)
+        schedule_end = nyse.schedule(start_date=this_period_end-offset_7days, end_date=this_period_end)
 
-    schedule_start = nyse.schedule(start_date=this_period_start, end_date=this_period_start+offset_7days)
-    schedule_end = nyse.schedule(start_date=this_period_end-offset_7days, end_date=this_period_end)
-
-    if timestampDate >= schedule_end.iloc[-1]['market_close']:  # timestamp after the candle close, this period should be included into 'pre' list
-        offset_pre = 0
-    if timestampDate < schedule_start.iloc[0]['market_open']:  # timestamp before the candle open, this period should be included into 'post' list
-        offset_post = 0
-    for ii in range(offset_pre, n_pre+offset_pre):  # Populate previous candles
-        candle_start = nyse.schedule(start_date=this_period_start-ii*period_offset, end_date=this_period_start-ii*period_offset+offset_7days)
-        candle_start = candle_start.iloc[0]['market_open']
-        candle_end = nyse.schedule(start_date=this_period_end-ii*period_offset-offset_7days, end_date=this_period_end-ii*period_offset)
-        candle_end = candle_end.iloc[-1]['market_close'] - pd.DateOffset(seconds=1)
-        candleOpenCloseTime['pre'].append((candle_start, candle_end))
-    for ii in range(offset_post, n_post+offset_post):   # Populate future candles
-        candle_start = nyse.schedule(start_date=this_period_start+ii*period_offset, end_date=this_period_start+ii*period_offset+offset_7days)
-        candle_start = candle_start.iloc[0]['market_open']
-        candle_end = nyse.schedule(start_date=this_period_end+ii*period_offset - offset_7days, end_date=this_period_end+ii*period_offset)
-        candle_end = candle_end.iloc[-1]['market_close'] - pd.DateOffset(seconds=1)
-        candleOpenCloseTime['post'].append((candle_start, candle_end))        
-    if (timestampDate < schedule_end.iloc[-1]['market_close'] and timestampDate >= schedule_start.iloc[0]['market_open']):   # Timestamp falls within the candle - populate current candle
-        candleOpenCloseTime['current'] = (schedule_start.iloc[0]['market_open'], schedule_end.iloc[-1]['market_close'] - pd.DateOffset(seconds=1))
+        if timestampDate >= schedule_end.iloc[-1]['market_close']:  # timestamp after the candle close, this period should be included into 'pre' list
+            offset_pre = 0
+        if timestampDate < schedule_start.iloc[0]['market_open']:  # timestamp before the candle open, this period should be included into 'post' list
+            offset_post = 0
+        for ii in range(offset_pre, n_pre+offset_pre):  # Populate previous candles
+            candle_start = nyse.schedule(start_date=this_period_start-ii*period_offset, end_date=this_period_start-ii*period_offset+offset_7days)
+            candle_start = candle_start.iloc[0]['market_open']
+            candle_end = nyse.schedule(start_date=this_period_start-(ii-1)*period_offset-offset_1sec-offset_7days, end_date=this_period_start-(ii-1)*period_offset-offset_1sec)
+            candle_end = candle_end.iloc[-1]['market_close'] - offset_1sec
+            candleOpenCloseTime['pre'].append((candle_start, candle_end))
+        for ii in range(offset_post, n_post+offset_post):   # Populate future candles
+            candle_start = nyse.schedule(start_date=this_period_start+ii*period_offset, end_date=this_period_start+ii*period_offset+offset_7days)
+            candle_start = candle_start.iloc[0]['market_open']
+            candle_end = nyse.schedule(start_date=this_period_start+(ii+1)*period_offset - offset_7days, end_date=this_period_start+(ii+1)*period_offset - offset_1sec)
+            candle_end = candle_end.iloc[-1]['market_close'] - offset_1sec
+            candleOpenCloseTime['post'].append((candle_start, candle_end))        
+        if (timestampDate < schedule_end.iloc[-1]['market_close'] and timestampDate >= schedule_start.iloc[0]['market_open']):   # Timestamp falls within the candle - populate current candle
+            candleOpenCloseTime['current'] = (schedule_start.iloc[0]['market_open'], schedule_end.iloc[-1]['market_close'] - pd.DateOffset(seconds=1))
+    
+    # convert all timestamps to desired timezone
+    for ii in range(len(candleOpenCloseTime['pre'])):
+        candleOpenCloseTime['pre'][ii] = tuple(map(lambda x: x.tz_convert(tz), candleOpenCloseTime['pre'][ii]))
+    if candleOpenCloseTime['current']:
+        candleOpenCloseTime['current'] = tuple(map(lambda x: x.tz_convert(tz), candleOpenCloseTime['current']))
+    for ii in range(len(candleOpenCloseTime['post'])):
+        candleOpenCloseTime['post'][ii] = tuple(map(lambda x: x.tz_convert(tz), candleOpenCloseTime['post'][ii]))
     return candleOpenCloseTime
 
 if __name__ == "__main__":
-    TF = 'd'
-    timestamp_dt = pd.to_datetime("2024-12-29 6:00:00").tz_localize('America/Los_Angeles')
+    #TF = 'm15'
+    timestamp_dt = pd.to_datetime("2024-12-30 6:00:00").tz_localize('America/Los_Angeles')
     timestamp_s = timestamp_dt.timestamp()
+    TF = 'w'
+    #timestamp_s = 1732026600.0
     candleSet = getCandleOpenCloseTime(timestamp_s, TF, 3, 4)
     print('Timestamp: ' + str(timestamp_dt) + '\tTimeframe: ' + TF + '\n')
     print('Previous candles:')
     for pre_candle in candleSet['pre']:
-        print(tuple(map(lambda x: x.tz_convert('America/Los_Angeles'), pre_candle)))
+        print(pre_candle)
+        #print(tuple(map(lambda x: x.tz_convert('America/Los_Angeles'), pre_candle)))
     if candleSet['current']:
-        print('\nCurrent candle: '+ str(tuple(map(lambda x: str(x.tz_convert('America/Los_Angeles')), candleSet['current']))) + '\n')
+        #print('\nCurrent candle: '+ str(tuple(map(lambda x: str(x.tz_convert('America/Los_Angeles')), candleSet['current']))) + '\n')
+        print('\nCurrent candle: '+ str(candleSet['current']) + '\n')
     else:
         print('\nCurrent candle: None \n')
     print('Future candles:')
     for post_candle in candleSet['post']:
-        print(tuple(map(lambda x: x.tz_convert('America/Los_Angeles'), post_candle)))
+        print(post_candle)
+        #print(tuple(map(lambda x: x.tz_convert('America/Los_Angeles'), post_candle)))
    
