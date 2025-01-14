@@ -27,7 +27,7 @@ def initSession():
     return stock_client
 
 # Returns a list of candles in chronological order (most recent candle last)
-# First (oldest) candle in the list opens before or on start_timestamp and closes after start_timestamp 
+# First (oldest) candle in the list is the oldest candle that closes after start_timestamp (if start_timestamp is within the candle - it is the first candle; otherwise it is the next candle)
 # Last (oldest) candle in the list opens before end_timestamp and closes on or after end_timestamp (could be live candle)
 #
 # Implementation detail:
@@ -158,7 +158,7 @@ if __name__ == "__main__":
     pd.options.mode.copy_on_write = True
     session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     startDay = pd.to_datetime("2024-10-01 0:00:00").tz_localize(EST)
-    endDay = pd.to_datetime("2024-10-15 0:00:00").tz_localize(EST)
+    endDay = pd.to_datetime("2024-10-14 6:00:00").tz_localize(EST)
     chart = getChart(session, symbol="SPY", timeframe_sym='d', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Daily chart: ')
     for candle in chart:

@@ -4,3 +4,4 @@ config.py
 td_state.json
 *.log
 alpaca_config.py
+resample_test.py
