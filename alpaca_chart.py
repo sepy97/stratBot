@@ -8,31 +8,32 @@ import candles
 #import util
 import MarketTimeManager as mtm
 
-aggregation_resample_dict = {'w': 'W', 'm': 'ME', 'q': 'Q', 'y': 'YE'}
+aggregation_resample_dict = {'d': 'D', 'w': 'W', 'm': 'ME', 'q': 'QE', 'y': 'YE'}
 
 # This function creates a single OHLC dataframe record from a series of smaller TF dataframes (assuming all smaller TF dataframes are for the same symbol)
 def aggregate_barsDF(df):
-        return pd.Series({
-            'symbol': df['symbol'].iloc[0],
-            'open': df['open'].iloc[0],
-            'high': df['high'].max(),
-            'low': df['low'].min(),
-            'close': df['close'].iloc[-1],
-        })
+    result = pd.Series({
+        'symbol': df['symbol'].iloc[0],
+        'open': df['open'].iloc[0],
+        'high': df['high'].max(),
+        'low': df['low'].min(),
+        'close': df['close'].iloc[-1],
+    })
+    result["timestamp"]=df.index[0]
+    return result
 
 def initSession():
     stock_client = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     return stock_client
 
-# Returns a list of candles. 
-# First candle in the list is the one that closes after start_timestamp and previous candle closes before start_timestamp 
-# If start_timestamp falls within the candle (candle open is before and candle close is after the timestamp), then that candle is the first one in the returned series.
-# Last candle always respects end_timestamp time (i.e. produces partial candle is end_timestamp falls in-between open and close time of a candle). If end_timestamp does not have time provided, time is set to 0:0:0
+# Returns a list of candles in chronological order (most recent candle last)
+# First (oldest) candle in the list opens before or on start_timestamp and closes after start_timestamp 
+# Last (oldest) candle in the list opens before end_timestamp and closes on or after end_timestamp (could be live candle)
 #
 # Implementation detail:
 # get_stock_bars: in Daily and higher timeframes, if start_time does not specify the time (only date) or if the time is 00:00:00EST then the first candle is the one that opens on the date of start_time, 
 #                 otherwise it is the candle that opens next  
-#                 Last bar always corresponds to the date of the end_time in EST
+#                 Last bar is always the one that closes at or after the end_time 
 # getCalendarOpenCloseTime returns the beginning of the actual bar whereas Alpaca takes calendar dates (for example, if first trading day of a month is 3rd then requesting monthly candle from 3rd of that month will return next month candle)
 # Note: we need to pull one extra candle prior to the sequence so as to identify whether the first candle is 1, 2, or 3
 def getChart(stock_client, symbol, timeframe_sym, start_timestamp, end_timestamp):
@@ -72,10 +73,10 @@ def getChart(stock_client, symbol, timeframe_sym, start_timestamp, end_timestamp
     '''
     tf = None
     if timeframe_sym == 'd':
-        start_time_query = start_time_query.replace(hour=0, min=0, second=0)
+        start_time_query = start_time_query.replace(hour=0, minute=0, second=0)
         tf = TimeFrame.Day
     elif timeframe_sym == 'w':
-        start_time_query = start_time_query-pd.Timedelta(days=startDay.weekday())
+        start_time_query = start_time_query-pd.Timedelta(days=start_time_query.weekday())
         start_time_query = start_time_query.replace(hour=0, minute=0, second=0)
         tf = TimeFrame.Week
     elif timeframe_sym == 'm':
@@ -94,9 +95,6 @@ def getChart(stock_client, symbol, timeframe_sym, start_timestamp, end_timestamp
         bars = bars.df
         bars.reset_index('symbol', inplace=True)
         bars = aggregateDailyChart(bars, timeframe_symbol=timeframe_sym)
-        previousCandleHigh = bars.iloc[0].high
-        previousCandleLow = bars.iloc[0].low
-        candles = convertBarsToCandleList(bars[1:], previousCandleHigh, previousCandleLow)
     else:
         # Alternative method (should be faster) - get complete candles and only build the last candle if it is partial
         # Complete candles
@@ -114,9 +112,9 @@ def getChart(stock_client, symbol, timeframe_sym, start_timestamp, end_timestamp
             bars_last = aggregateDailyChart(bars_last, timeframe_symbol=timeframe_sym)
             # Add bars_last to bars
             bars = pd.concat([bars, bars_last])
-        previousCandleHigh = bars.iloc[0].high
-        previousCandleLow = bars.iloc[0].low
-        candles = convertBarsToCandleList(bars[1:], previousCandleHigh, previousCandleLow)
+    previousCandleHigh = bars.iloc[0].high
+    previousCandleLow = bars.iloc[0].low
+    candles = convertBarsToCandleList(bars[1:], previousCandleHigh, previousCandleLow)
     
     return candles
 
@@ -124,9 +122,10 @@ def getChart(stock_client, symbol, timeframe_sym, start_timestamp, end_timestamp
 # Convert daily chart into higher TF. Supported timeframes: W, M, Q, Y. Returns Panda DataFrame.
 # NOTE: requires daily chart to start at the beginning of the HTF period, otherwise the first HTF will be incorrect (wrong open, and possibly wrong high and low)
 def aggregateDailyChart(barsDataFrame, timeframe_symbol):
-    barsDataFrame['timestamp'] = pd.to_datetime(barsDataFrame.index)
-    barsDataFrame.set_index('timestamp', inplace=True)
-    barsDataFrame_HTF = barsDataFrame.resample(aggregation_resample_dict[timeframe_symbol], label='left').apply(aggregate_barsDF).asfreq('D')
+    #barsDataFrame['timestamp'] = pd.to_datetime(barsDataFrame.index)  
+    #barsDataFrame.set_index('timestamp', inplace=True)
+    barsDataFrame_HTF = barsDataFrame.resample(aggregation_resample_dict[timeframe_symbol], label='left').apply(aggregate_barsDF)#.asfreq('D')
+    barsDataFrame_HTF.set_index('timestamp', inplace=True)
     barsDataFrame_HTF.dropna(how='all', inplace=True)
     return barsDataFrame_HTF
 
@@ -160,7 +159,28 @@ if __name__ == "__main__":
     session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     startDay = pd.to_datetime("2024-10-01 0:00:00").tz_localize(EST)
     endDay = pd.to_datetime("2024-10-15 0:00:00").tz_localize(EST)
+    chart = getChart(session, symbol="SPY", timeframe_sym='d', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    print('Daily chart: ')
+    for candle in chart:
+        print(candle.to_string_full())
+
     chart = getChart(session, symbol="SPY", timeframe_sym='w', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    print('Weekly chart: ')
+    for candle in chart:
+        print(candle.to_string_full())
+
+    chart = getChart(session, symbol="SPY", timeframe_sym='m', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    print('Monthly chart: ')
+    for candle in chart:
+        print(candle.to_string_full())
+
+    chart = getChart(session, symbol="SPY", timeframe_sym='q', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    print('Quarterly chart: ')
+    for candle in chart:
+        print(candle.to_string_full())
+
+    chart = getChart(session, symbol="SPY", timeframe_sym='y', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    print('Yearly chart: ')
     for candle in chart:
         print(candle.to_string_full())
 
