@@ -1,14 +1,16 @@
 import pandas as pd
 class Candle:
     # Financial candle
-    def __init__(self, timestamp_ms, open, high, low, close, prev_high, prev_low):
-        self.timestamp_ms = timestamp_ms    # timestamp in milliseconds
+    def __init__(self, timestamp_ms, open, high, low, close, prev_high, prev_low, close_ts=None):
+        self.timestamp_ms = timestamp_ms    # timestamp in milliseconds (opening time. Documentation says it should be closing time - got confirmation this is a API doc bug. See https://forum.alpaca.markets/t/alpaca-historical-data-bar-timestamp/15867/2)
         self.open = open
         self.high = high
         self.low = low
         self.close = close
         self.previous_high = prev_high
         self.previous_low = prev_low
+        self.open_ts = self.timestamp_ms/1000
+        self.close_ts = close_ts
     
     def __str__(self):
         return "Date: " + str(self.timestamp_ms) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + "\n"
@@ -96,5 +98,5 @@ class Candle:
         return self.get_kind() + self.get_subtype() + self.get_direction()
     
     def to_string_full(self):
-        dt = pd.to_datetime(round(self.timestamp_ms/1000), unit='s').tz_localize('America/New_York').floor('s')
+        dt = pd.to_datetime(round(self.timestamp_ms/1000), unit='s', utc=True).tz_convert('America/New_York').floor('s')
         return "Date: " + str(dt) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + " " + self.to_string() 
