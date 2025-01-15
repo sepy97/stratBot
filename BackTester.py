@@ -4,6 +4,7 @@ import alpaca_chart
 import util
 import pandas as pd
 import MarketTimeManager as mtm
+import os
 
 # TODO: ALL TIMESTAMPS ARE IN SECONDS, NOT MILLISECONDS - RESPECTIVE KEYS NEED TO BE UPDATED
 # Assumes candle1 is candle at T-2, candle2 is candle at T-1
@@ -140,6 +141,7 @@ def printChart(chart):
                 f.write(candle.to_string_full() + '\n')
 
 # This function updates all charts based on new daily candle. Assumes new candle is the next immediate candle after last_day
+# Starting chart (chartDict) must have at least one candle for each TF
 def addDailyCandleToChart(chartDict, last_day, dayCandle, currentDay):
     w = currentDay.week
     m = currentDay.month
@@ -151,32 +153,40 @@ def addDailyCandleToChart(chartDict, last_day, dayCandle, currentDay):
     last_y = last_day.year
     chartDict['d'].append(dayCandle)
     # Weekly flip
-    if w != last_w or not chartDict['w']:
+    if w != last_w:
         chartDict['w'].append(dayCandle)
+        chartDict['w'][-1].previous_high = chartDict['w'][-2].high
+        chartDict['w'][-1].previous_low = chartDict['w'][-2].low
     else:
         chartDict['w'][-1].high = max(chartDict['w'][-1].high, dayCandle.high)
         chartDict['w'][-1].low = min(chartDict['w'][-1].low, dayCandle.low)
         chartDict['w'][-1].close = dayCandle.close
 
     # Monthly flip
-    if m != last_m or not chartDict['m']:
+    if m != last_m:
         chartDict['m'].append(dayCandle)
+        chartDict['m'][-1].previous_high = chartDict['m'][-2].high
+        chartDict['m'][-1].previous_low = chartDict['m'][-2].low
     else:
         chartDict['m'][-1].high = max(chartDict['m'][-1].high, dayCandle.high)
         chartDict['m'][-1].low = min(chartDict['m'][-1].low, dayCandle.low)
         chartDict['m'][-1].close = dayCandle.close
 
     # Quarterly flip
-    if q != last_q or not chartDict['q']:
+    if q != last_q:
         chartDict['q'].append(dayCandle)
+        chartDict['q'][-1].previous_high = chartDict['q'][-2].high
+        chartDict['q'][-1].previous_low = chartDict['q'][-2].low
     else:
         chartDict['q'][-1].high = max(chartDict['q'][-1].high, dayCandle.high)
         chartDict['q'][-1].low = min(chartDict['q'][-1].low, dayCandle.low)
         chartDict['q'][-1].close = dayCandle.close
 
     # Yearly flip
-    if y != last_y or not chartDict['y']:
+    if y != last_y:
         chartDict['y'].append(dayCandle)
+        chartDict['y'][-1].previous_high = chartDict['y'][-2].high
+        chartDict['y'][-1].previous_low = chartDict['y'][-2].low
     else:
         chartDict['y'][-1].high = max(chartDict['y'][-1].high, dayCandle.high)
         chartDict['y'][-1].low = min(chartDict['y'][-1].low, dayCandle.low)
@@ -193,8 +203,8 @@ def addDailyCandleToChart(chartDict, last_day, dayCandle, currentDay):
 #       Update status of existing trades
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
-    startDay_str = "2024-12-01 6:30:00"
-    endDay_str = "2024-12-04 6:30:00"
+    startDay_str = "2024-11-23 6:30:00"
+    endDay_str = "2024-12-01 6:30:00"
     timezone = 'America/Los_Angeles'
 
     #TDSession = session.initTDSession()
@@ -220,19 +230,22 @@ if __name__ == "__main__":
         startDayMarket = startDayMarket[0]
     else:
         startDayMarket = startDayMarket['current'][0]
+    # Given that startDayMarket is the first day of market open, we can initialize all charts
     for TF_sym in TF_sym_list:
         chartDict[TF_sym] = alpaca_chart.getChart(stock_client=session, symbol=symbol, timeframe_sym=TF_sym, start_timestamp=startDayMarket.timestamp(), end_timestamp=startDayMarket.timestamp())
     lastDay = startDayMarket
-    
+    if os.path.exists('chart.txt'):
+        os.remove('chart.txt')
+    printChart(chartDict)
     # Start backtesting
     for day_id in range(1, len(dailyChart)):
-        printChart(chartDict)
         # Update charts
         dayCandle = dailyChart[day_id]
         currentDay = pd.to_datetime(dayCandle.open_ts, unit='s')
         chartDict = addDailyCandleToChart(chartDict, lastDay, dayCandle, currentDay)
         lastDay = currentDay
-        
+        printChart(chartDict)
+
         # Update trades
         #for trade in trades:
         #    if trade['exitPrice'] == - 1:
