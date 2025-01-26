@@ -28,50 +28,95 @@ def initSession():
 
 # Returns a list of candles in chronological order (most recent candle last)
 # First (oldest) candle in the list is the oldest candle that closes after start_timestamp (if start_timestamp is within the candle - it is the first candle; otherwise it is the next candle)
-# Last (oldest) candle in the list opens before end_timestamp and closes on or after end_timestamp (could be live candle)
+# Last (oldest) candle in the list opens before end_timestamp and closes on end_timestamp (could be partial candle)
 #
 # Implementation detail:
-# get_stock_bars: in Daily and higher timeframes, if start_time does not specify the time (only date) or if the time is 00:00:00EST then the first candle is the one that opens on the date of start_time, 
-#                 otherwise it is the candle that opens next  
-#                 Last bar is always the one that closes at or after the end_time 
+# get_stock_bars: 
+#                 Daily and higher timeframes: 
+#                 - If start_time does not specify the time (only date) or if the time is 00:00:00EST then the first candle is the one that opens on the date of start_time, 
+#                 otherwise it is the candle that opens next. If start_time is not on the trading day then the first candle is the one that opens on the next trading day
+#                 - Last bar is always the one that closes at or after the end_time 
+#                 - Daily and higher timeframes do not include pre-market or after-hours data
+#                 Intraday timeframes:
+#                 - If time of start_time is not specified (only date) then the first candle is from the beginning of the premarket of that day
+#                 - First candle is the one that opens at or after the start_time
+#                 - Include pre-market and after-hours data and no easy way to exclude (https://forum.alpaca.markets/t/premarket-data-in-python/14012/6)
+#                 - Last bar is always the one that closes at or after the end_time
 # getCalendarOpenCloseTime returns the beginning of the actual bar whereas Alpaca takes calendar dates (for example, if first trading day of a month is 3rd then requesting monthly candle from 3rd of that month will return next month candle)
 # Note: we need to pull one extra candle prior to the sequence so as to identify whether the first candle is 1, 2, or 3
 def getChart(stock_client, symbol, timeframe_sym, start_timestamp, end_timestamp):
     EST = 'America/New_York'
     PST = "America/Los_Angeles"
+    intraday = False
+    tf = None
+    if timeframe_sym[0] == 'm' and timeframe_sym[1:].isdigit():
+        intraday = True
+        tf_min_count = int(timeframe_sym[1:])
+        tf = TimeFrame(tf_min_count, TimeFrameUnit.Minute)
 
+    
     start_time = pd.Timestamp.fromtimestamp(start_timestamp, tz=EST)
     end_time = pd.Timestamp.fromtimestamp(end_timestamp, tz=EST)
     # Get the beginning of the candle prior to the one corresponding to start_timestamp:
     #   If start_timestamp is before candle open and after previous close (outside of market hours) --> need to pull one previous candle to get previous low and high
-    #   If start_timestamp is after candle open and before candle close (falls within candle range) --> previous low and high are defined by first previous candle
+    #   If start_timestamp is after candle open and before candle close (falls within candle range) --> previous low and high are defined by the most recent previous candle
+    # Note: MarketTimeManager always ignores premarket and afterhours times, so below will correctly return previous candle for all timeframes (including intraday)
     start_time_query = mtm.getCandleOpenCloseTime(timestamp_s=start_timestamp, timeframe_sym=timeframe_sym, n_pre=1, n_post=0)
     start_time_query = start_time_query['pre'][0]
     start_time_query = start_time_query[0]
 
     # Identify timespan of the last partial candle
     partial_candle = None
+    partial_candle_from1min = None # to be constructed from 1min bars
+    partial_candle_fromD = None   # to be constructed from daily bars
     end_time_query = mtm.getCandleOpenCloseTime(timestamp_s=end_timestamp, timeframe_sym=timeframe_sym, n_pre=1, n_post=0)
-    
-    if end_time_query['current'] is not None:   # need to find the timespan of partial candle. TODO: currently does not work for intraday
-        previous_candle = end_time_query['pre'][0] 
-        end_time_daily = mtm.getCandleOpenCloseTime(timestamp_s=end_timestamp, timeframe_sym='d', n_pre=0, n_post=1)
-        next_daily_candle = end_time_daily['post'][0]
-        if (end_time_daily['current'] is None) and (end_time.date() == next_daily_candle[0].date()):   # end time stamp before market hours
-            partial_candle = (previous_candle[1], end_time - pd.DateOffset(days=1))   # from close of previous candle to close of current candle
-        else:
-            partial_candle = (previous_candle[1], end_time)
-    end_time_query = end_time_query['pre'][0]
-    end_time_query = end_time_query[1]
+    # Get the end of the last complete candle
+    end_time_complete_candle = end_time_query['pre'][0]
+    end_time_complete_candle = end_time_complete_candle[1]
+    # If end_time_query['current'] is None, then there is no partial candle, otherwise - find the beginning and end of the partial candle
+    # In case of intraday, end_time_query['current'][0] is accurate beginning of the partial candle; end_timestamp is accurate end of the partial candle
+    # In case of higher TF (D, W, M, Q, Y), end_time_query['current'][0] is accurate beginning of the partial candle and matches the beginning of the first D candle comprising higher TF partial candle;
+    #   if end_time is on trading day before market opens or on non-trading day then partial candle ends at the close of the previous D candle
+    #   if end_time is on trading day is after market close, then partial candle ends at the close of the current D candle
+    #   if end_time is on trading day during market hours, then partial candle needs to be built from the close of the previous D candle and using 1min bars of the current day until end_time
+    #   Therefore, end_time is always built from the end of previous D candle and if end_time is within market hours - from 1min bars of current day
+    bars_last = None
+    bars_1min = None
+    if end_time_query['current'] is not None:   # need to find the timespan of partial candle. Note: for high TF (W, M, Q, Y), end_timestamp may fall on non-trading day while being within the partial candle 
+        # Two step process: 
+        # - If end_time is within market hours, then get the last partial daily candle from 1min bars; 
+        # - For TF higher than D, get complete D candles comprising the partial candle and then add the last partial D candle from previous step
 
-    '''
-    TODO: support intraday timeframes
-    if timeframe_sym == 'm1':
-        bars = stock_client.get_stock_bars(StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Minute, start=start_time, end=end_time))
-        bars = bars.df
-        bars.reset_index('symbol', inplace=True)
-    '''
-    tf = None
+        end_time_daily = mtm.getCandleOpenCloseTime(timestamp_s=end_timestamp, timeframe_sym='d', n_pre=1, n_post=0)
+        # If end_time is during market hours and is at least 1min after open, build last D partial candle from 1min bars
+        if (end_time_daily['current'] is not None) and (end_time_daily['current'][0] <= end_time-pd.DateOffset(minutes=1)):   
+            # Always pull 1min bars starting from market open to get proper aggregation
+            request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Minute, start=end_time_daily['current'][0], end=end_time-pd.DateOffset(minutes=1))
+            bars_1min = stock_client.get_stock_bars(request_params)
+            bars_1min = bars_1min.df
+            bars_1min.reset_index('symbol', inplace=True)
+            if intraday:
+                bars_1min = aggregateMinuteChart(bars_1min, timeframe_symbol=timeframe_sym)
+                # drop bars before start_time_query. Note that if start_time_query is within the first candle, then the first candle needs to be retained
+                bars_todrop = bars_1min[bars_1min.index <= start_time_query]
+                if not bars_todrop.empty:  
+                    bars_1min = pd.concat([bars_todrop.iloc[[-1]], bars_1min[bars_1min.index > start_time_query]])
+            else:
+                bars_1min = aggregateDailyChart(bars_1min, timeframe_symbol='d')
+        end_time_daily = end_time_daily['pre'][0]
+        if end_time_complete_candle < end_time_daily[1]:   # there are complete daily candles to add to partial candle (this block can only execute for higher TF)
+            if intraday:
+                print("Something is wrong, executing block that should not execute for intraday")
+            request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Day, start=end_time_complete_candle, end=end_time_daily[1])
+            bars_last = stock_client.get_stock_bars(request_params)
+            bars_last = bars_last.df
+            bars_last.reset_index('symbol', inplace=True)
+            if bars_1min is not None:
+                bars_last = pd.concat([bars_last, bars_1min])
+            bars_last = aggregateDailyChart(bars_last, timeframe_symbol=timeframe_sym)
+        else:
+            bars_last = bars_1min
+    
     if timeframe_sym == 'd':
         start_time_query = start_time_query.replace(hour=0, minute=0, second=0)
         tf = TimeFrame.Day
@@ -97,25 +142,31 @@ def getChart(stock_client, symbol, timeframe_sym, start_timestamp, end_timestamp
         bars = aggregateDailyChart(bars, timeframe_symbol=timeframe_sym)
     else:
         # Alternative method (should be faster) - get complete candles and only build the last candle if it is partial
-        # Complete candles
-        request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf, start=start_time_query, end=end_time_query)
+        # Complete candles. TODO: In D and higher TFs Alpaca returns opening times at 0:00:00 UTC. 
+        request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf, start=start_time_query, end=end_time_complete_candle)
         bars = stock_client.get_stock_bars(request_params)
         bars = bars.df
         bars.reset_index('symbol', inplace=True)
         bars.drop(columns=['volume', 'trade_count', 'vwap'], inplace=True)
         # Last partial candle
-        if partial_candle is not None:
-            request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Day, start=partial_candle[0], end=partial_candle[1])
-            bars_last = stock_client.get_stock_bars(request_params)
-            bars_last = bars_last.df
-            bars_last.reset_index('symbol', inplace=True)
-            bars_last = aggregateDailyChart(bars_last, timeframe_symbol=timeframe_sym)
+        if bars_last is not None:
+            #request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Day, start=partial_candle[0], end=partial_candle[1])
+            #bars_last = stock_client.get_stock_bars(request_params)
+            #bars_last = bars_last.df
+            #bars_last.reset_index('symbol', inplace=True)
+            #bars_last = aggregateDailyChart(bars_last, timeframe_symbol=timeframe_sym)
             # Add bars_last to bars
             bars = pd.concat([bars, bars_last])
+    if intraday:
+        # For intraday, Alpaca includes candles outside of market hours, so we need to drop those
+        day_count = (end_timestamp - start_timestamp)/(24*60*60) + 2    # to ensure we include partial days corresponding to start and end timestamps
+        candle_ranges = mtm.getCandleOpenCloseTime(timestamp_s=end_timestamp+24*60*60, timeframe_sym='d', n_pre=day_count, n_post=0)
+        candle_ranges = candle_ranges['pre'] 
+        bars = bars[bars.index.to_series().apply(lambda ts: any(start_dt <= ts < end_dt for start_dt, end_dt in candle_ranges))]
+ 
     previousCandleHigh = bars.iloc[0].high
     previousCandleLow = bars.iloc[0].low
     candles = convertBarsToCandleList(bars[1:], previousCandleHigh, previousCandleLow)
-    
     return candles
 
 
@@ -129,6 +180,17 @@ def aggregateDailyChart(barsDataFrame, timeframe_symbol):
     barsDataFrame_HTF.dropna(how='all', inplace=True)
     return barsDataFrame_HTF
 
+# Convert intraday chart into higher TF. Supported timeframes: "mxxx" where xxx is the number of minutes and 'd' (for the entire day to be built from 1min candles). Returns Panda DataFrame.
+def aggregateMinuteChart(barsDataFrame, timeframe_symbol):
+    tf = None
+    if timeframe_symbol == 'd':
+        tf = 'D'
+    else:
+        tf = timeframe_symbol[1:]+"min"
+    barsDataFrame_HTF = barsDataFrame.resample(tf, label='left').apply(aggregate_barsDF)#.asfreq('D')
+    barsDataFrame_HTF.set_index('timestamp', inplace=True)
+    barsDataFrame_HTF.dropna(how='all', inplace=True)
+    return barsDataFrame_HTF
 # This function converts BarSet returned by get_stock_bars into a list of Candles instances
 def convertBarsToCandleList(bars, previousHigh, previousLow):
     if not bars.empty: # check if we got any bars
@@ -157,13 +219,20 @@ if __name__ == "__main__":
     EST = 'America/New_York'
     pd.options.mode.copy_on_write = True
     session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
-    startDay = pd.to_datetime("2024-10-01 0:00:00").tz_localize(EST)
-    endDay = pd.to_datetime("2024-10-14 6:00:00").tz_localize(EST)
+    startDay = pd.to_datetime("2025-01-13 9:31:00").tz_localize(EST)
+    endDay = pd.to_datetime("2025-01-16 9:31:00").tz_localize(EST)
+    #chart = session.get_stock_bars(StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame(1, TimeFrameUnit.Minute), start=startDay, end=endDay))
+    #chart = chart.df
+    #print(chart)
+    #chart.reset_index('symbol', inplace=True)
+    #chart_5min = aggregateMinuteChart(chart, 'd')
+    #print(chart_5min)
+    
     chart = getChart(session, symbol="SPY", timeframe_sym='d', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Daily chart: ')
     for candle in chart:
         print(candle.to_string_full())
-
+    '''
     chart = getChart(session, symbol="SPY", timeframe_sym='w', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Weekly chart: ')
     for candle in chart:
@@ -183,7 +252,7 @@ if __name__ == "__main__":
     print('Yearly chart: ')
     for candle in chart:
         print(candle.to_string_full())
-
+    '''
     #start_time_query = mtm.getCandleOpenCloseTime(timestamp_s=startDay, timeframe_sym='d', n_pre=1, n_post=0)
     #start_time_query = start_time_query['pre'][0]
     #start_time_query = start_time_query[0]

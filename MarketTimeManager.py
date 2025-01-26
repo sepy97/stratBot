@@ -180,7 +180,7 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='Am
     nyse = mcal.get_calendar('NYSE')
     timestampDate = pd.to_datetime(timestamp_s, unit='s', utc=True).tz_convert('America/New_York')     # convert to Panda Datetime and ensure it is timezone-aware and in NY timezone
 
-    if timeframe_sym in ['m60', 'm30', 'm15', 'm5']:
+    if timeframe_sym in ['m60', 'm30', 'm15', 'm5', 'm1']:
         period_s = int(timeframe_sym[1:])*60
         this_period_start = timestampDate.replace(hour=0, minute=0, second=0)
         this_period_end = timestampDate.replace(hour=23, minute=59, second=59)
