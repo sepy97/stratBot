@@ -186,10 +186,10 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='Am
         this_period_end = timestampDate.replace(hour=23, minute=59, second=59)
         # populate current candle
         sch_day = nyse.schedule(start_date=this_period_start, end_date=this_period_end)
-        if (not sch_day.empty) and (timestampDate >= sch_day.iloc[0]['market_open']) and (timestampDate < sch_day.iloc[0]['market_close']):
+        if (not sch_day.empty) and (timestampDate >= sch_day.iloc[0]['market_open']) and (timestampDate < sch_day.iloc[0]['market_close']-pd.DateOffset(seconds=1)):   # timestamp falls within the candle - populate current candle
             k = int((timestampDate - sch_day.iloc[0]['market_open']).total_seconds()/period_s)  # number of candles prior to timestamp 
             candle_start = sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=k*period_s)
-            candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=(k+1)*period_s)) - pd.DateOffset(seconds=1)
+            candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=(k+1)*period_s)) #- pd.DateOffset(seconds=1)
             candleOpenCloseTime['current'] = (candle_start, candle_end)
         # populate pre candles
         period_start = this_period_start
@@ -208,7 +208,7 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='Am
                 if (timestampAdj >= sch_day.iloc[0]['market_close']) and (sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=k*period_s) < sch_day.iloc[0]['market_close']):    # account for situation when last candle of the day is partial (e.g. last 60min candle is only 30min long)
                     k = k + 1
                 candle_start = sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=(k-1)*period_s)
-                candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=k*period_s)) - pd.DateOffset(seconds=1)
+                candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=k*period_s)) #- pd.DateOffset(seconds=1)
                 candleOpenCloseTime['pre'].append((candle_start, candle_end))
                 timestampAdj = candle_start
                 candles_collected += 1
@@ -232,7 +232,7 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='Am
                 if candle_start >= sch_day.iloc[0]['market_close']:
                     moveToNextDay = True
                     continue
-                candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=(k+1)*period_s)) - pd.DateOffset(seconds=1)
+                candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=(k+1)*period_s)) #- pd.DateOffset(seconds=1)
                 candleOpenCloseTime['post'].append((candle_start, candle_end))
                 timestampAdj = candle_end
                 candles_collected += 1
@@ -247,7 +247,8 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='Am
         while candles_collected < n_pre:
             sch_day = nyse.schedule(start_date=period_start, end_date=period_end)
             if (not sch_day.empty and timestampDate >= sch_day.iloc[0]['market_close']):
-                candleOpenCloseTime['pre'].append((sch_day.iloc[0]['market_open'], sch_day.iloc[0]['market_close'] - pd.DateOffset(seconds=1)))
+                #candleOpenCloseTime['pre'].append((sch_day.iloc[0]['market_open'], sch_day.iloc[0]['market_close'] - pd.DateOffset(seconds=1)))
+                candleOpenCloseTime['pre'].append((sch_day.iloc[0]['market_open'], sch_day.iloc[0]['market_close']))
                 candles_collected+=1
             period_start = period_start - period_offset
             period_end = period_end - period_offset
@@ -259,11 +260,13 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='Am
             period_end = period_end + period_offset
             sch_day = nyse.schedule(start_date=period_start, end_date=period_end)
             if (not sch_day.empty):
-                candleOpenCloseTime['post'].append((sch_day.iloc[0]['market_open'], sch_day.iloc[0]['market_close'] - pd.DateOffset(seconds=1)))
+                #candleOpenCloseTime['post'].append((sch_day.iloc[0]['market_open'], sch_day.iloc[0]['market_close'] - pd.DateOffset(seconds=1)))
+                candleOpenCloseTime['post'].append((sch_day.iloc[0]['market_open'], sch_day.iloc[0]['market_close']))
                 candles_collected+=1
         this_sch = nyse.schedule(start_date=this_period_start, end_date=this_period_end)
         if (not this_sch.empty) and (timestampDate < this_sch.iloc[0]['market_close']) and (timestampDate >= this_sch.iloc[0]['market_open']):   # Timestamp falls within the candle - populate current candle
-            candleOpenCloseTime['current'] = (this_sch.iloc[0]['market_open'], this_sch.iloc[-1]['market_close'] - pd.DateOffset(seconds=1))
+            #candleOpenCloseTime['current'] = (this_sch.iloc[0]['market_open'], this_sch.iloc[-1]['market_close'] - pd.DateOffset(seconds=1))
+            candleOpenCloseTime['current'] = (this_sch.iloc[0]['market_open'], this_sch.iloc[-1]['market_close'])
 
     else:
         # Yearly, Quarterly, Monthly, Weekly
@@ -303,16 +306,16 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='Am
             candle_start = nyse.schedule(start_date=this_period_start-ii*period_offset, end_date=this_period_start-ii*period_offset+offset_7days)
             candle_start = candle_start.iloc[0]['market_open']
             candle_end = nyse.schedule(start_date=this_period_start-(ii-1)*period_offset-offset_1sec-offset_7days, end_date=this_period_start-(ii-1)*period_offset-offset_1sec)
-            candle_end = candle_end.iloc[-1]['market_close'] - offset_1sec
+            candle_end = candle_end.iloc[-1]['market_close'] #- offset_1sec
             candleOpenCloseTime['pre'].append((candle_start, candle_end))
         for ii in range(offset_post, n_post+offset_post):   # Populate future candles
             candle_start = nyse.schedule(start_date=this_period_start+ii*period_offset, end_date=this_period_start+ii*period_offset+offset_7days)
             candle_start = candle_start.iloc[0]['market_open']
             candle_end = nyse.schedule(start_date=this_period_start+(ii+1)*period_offset - offset_7days, end_date=this_period_start+(ii+1)*period_offset - offset_1sec)
-            candle_end = candle_end.iloc[-1]['market_close'] - offset_1sec
+            candle_end = candle_end.iloc[-1]['market_close'] #- offset_1sec
             candleOpenCloseTime['post'].append((candle_start, candle_end))        
         if (timestampDate < schedule_end.iloc[-1]['market_close'] and timestampDate >= schedule_start.iloc[0]['market_open']):   # Timestamp falls within the candle - populate current candle
-            candleOpenCloseTime['current'] = (schedule_start.iloc[0]['market_open'], schedule_end.iloc[-1]['market_close'] - pd.DateOffset(seconds=1))
+            candleOpenCloseTime['current'] = (schedule_start.iloc[0]['market_open'], schedule_end.iloc[-1]['market_close']) #- pd.DateOffset(seconds=1))
     
     # convert all timestamps to desired timezone
     for ii in range(len(candleOpenCloseTime['pre'])):
@@ -325,9 +328,9 @@ def getCandleOpenCloseTime(timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='Am
 
 if __name__ == "__main__":
     #TF = 'm15'
-    timestamp_dt = pd.to_datetime("2024-12-30 6:00:00").tz_localize('America/Los_Angeles')
+    timestamp_dt = pd.to_datetime("2024-12-30 7:30:00").tz_localize('America/Los_Angeles')
     timestamp_s = timestamp_dt.timestamp()
-    TF = 'w'
+    TF = 'm60'
     #timestamp_s = 1732026600.0
     candleSet = getCandleOpenCloseTime(timestamp_s, TF, 3, 4)
     print('Timestamp: ' + str(timestamp_dt) + '\tTimeframe: ' + TF + '\n')
