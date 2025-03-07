@@ -197,7 +197,7 @@ def aggregateDailyChart(barsDataFrame, timeframe_symbol):
 # Convert intraday chart into higher TF. Supported timeframes: "mxxx" where xxx is the number of minutes and 'd' (for the entire day to be built from 1min candles). Returns Panda DataFrame.
 def aggregateMinuteChart(barsDataFrame, timeframe_symbol):
     tf = None
-    offset = 0
+    offset = pd.Timedelta(minutes=0)
     if timeframe_symbol == 'd':
         tf = 'D'
     elif int(timeframe_symbol[1:]) < 60:
