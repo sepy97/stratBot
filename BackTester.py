@@ -88,22 +88,31 @@ def enterTrade(sym, chartDict, session):
             #intradayCandles = alpaca_chart.getChart(session, sym, 'm1', tradeDay, tradeDay)
             tradeDay = mtm.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
             intradayCandles = alpaca_chart.getChart(session, sym, 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
-            ii = 0
-            while (ii < len(intradayCandles) and (intradayCandles[ii].high <= triggerPrice)):
-                ii = ii + 1
-            if ii == len(intradayCandles):  # this should never happen
-                print('No long entry found intraday but expected an entry based on daily chart')
+            entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high > triggerPrice), None)
+            if entryID is None:
+                print(f'No long entry found intraday but expected an entry based on daily chart on {tradeDay[0]}')
                 return tradeToReturn
             else:   # enter trade
-                entryTimestamp = intradayCandles[ii].open_ts
+                entryTimestamp = intradayCandles[entryID].open_ts
+
+            #ii = 0
+            #while (ii < len(intradayCandles) and (intradayCandles[ii].high <= triggerPrice)):
+            #    ii = ii + 1
+            #if ii == len(intradayCandles):  # this should never happen
+            #    print(f'No long entry found intraday but expected an entry based on daily chart on {tradeDay[0]}')
+            #    return tradeToReturn
+            #else:   # enter trade
+            #    entryTimestamp = intradayCandles[ii].open_ts
             # check if stop out the same day (for efficiency, so we don't pull the same 1min data from API again)
             stopPrice = 0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low)
-            ii = ii + 1
-            while (ii < len(intradayCandles) and (intradayCandles[ii].low >= stopPrice)):
-                ii = ii + 1
-            if ii < len(intradayCandles): # stopped the same day
+            exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.low < stopPrice), None)
+            #ii = ii + 1
+            #while (ii < len(intradayCandles) and (intradayCandles[ii].low >= stopPrice)):
+            #    ii = ii + 1
+            #if ii < len(intradayCandles): # stopped the same day
+            if not exitID is None:
                 exitPrice = stopPrice
-                exitTimestamp = intradayCandles[ii].open_ts
+                exitTimestamp = intradayCandles[exitID].open_ts
                 daysOpen = 0
             tradeToReturn = {'symbol': sym, 'entryPrice': triggerPrice, 'entryTimestamp_ms': entryTimestamp, 
                          'stop': triggerPrice, 'exitPrice': exitPrice, 'exitTimestamp_ms': exitTimestamp, 
@@ -124,22 +133,31 @@ def enterTrade(sym, chartDict, session):
             #tradeDay = pd.to_datetime(chartDict['d'][-1].open_ts, unit='s').date()
             tradeDay = mtm.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
             intradayCandles = alpaca_chart.getChart(session, sym, 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
-            ii = 0
-            while (ii < len(intradayCandles) and intradayCandles[ii].low >= triggerPrice):
-                ii = ii + 1
-            if ii == len(intradayCandles):  # this should never happen
+            
+            entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.low < triggerPrice), None)
+            if entryID is None:
                 print(f'No short entry found intraday but expected an entry based on daily chart on {tradeDay[0]}')
                 return tradeToReturn
             else:   # enter trade
-                entryTimestamp = intradayCandles[ii].open_ts
+                entryTimestamp = intradayCandles[entryID].open_ts
+            #while (ii < len(intradayCandles) and intradayCandles[ii].low >= triggerPrice):
+            #    ii = ii + 1
+            #if ii == len(intradayCandles):  # this should never happen
+            #    print(f'No short entry found intraday but expected an entry based on daily chart on {tradeDay[0]}')
+            #    return tradeToReturn
+            #else:   # enter trade
+            #    entryTimestamp = intradayCandles[ii].open_ts
             # check if stop out the same day (for efficiency, so we don't pull the same 1min data from API again)
             stopPrice = 0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low)
-            ii = ii + 1
-            while (ii < len(intradayCandles) and intradayCandles[ii].high <= stopPrice):
-                ii = ii + 1
-            if ii < len(intradayCandles): # stopped the same day
+            exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.high > stopPrice), None)
+
+            #ii = ii + 1
+            #while (ii < len(intradayCandles) and intradayCandles[ii].high <= stopPrice):
+            #    ii = ii + 1
+            #if ii < len(intradayCandles): # stopped the same day
+            if not exitID is None:
                 exitPrice = stopPrice
-                exitTimestamp = intradayCandles[ii].open_ts
+                exitTimestamp = intradayCandles[exitID].open_ts
                 daysOpen = 0
             tradeToReturn = {'symbol': sym, 'entryPrice': triggerPrice, 'entryTimestamp_ms': entryTimestamp,
                          'stop': triggerPrice, 'exitPrice': exitPrice, 'exitTimestamp_ms': exitTimestamp,
@@ -285,8 +303,8 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
 #       Update status of existing trades
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
-    startDay_str = "2025-02-25 6:30:00"
-    endDay_str = "2025-02-28 6:30:00"
+    startDay_str = "2024-11-24 6:30:00"
+    endDay_str = "2024-12-01 6:30:00"
     timezone = 'America/Los_Angeles'
     symbol = "SPY"
 
