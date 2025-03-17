@@ -71,7 +71,7 @@ def enterTrade(sym, chartDict, session):
     exitPrice = -1
     exitTimestamp = -1
     daysOpen = 1
-    # Strategy: if AS on D in force, price at trigger > prev W high and previous M high + TFC on D, W, M (taken at trigger price)
+    # Strategy: if AS on D in force + TFC on D, W, M (taken at trigger price)
     # Actionable signals: 1-2, 2-2 reversal (so 2u-2d or 2d-2u). Single day rev-strat (1-3) - not implemented. Gap over trigger should be ignored
     # Bullish version
     if  (
@@ -166,49 +166,59 @@ def enterTrade(sym, chartDict, session):
 
     return tradeToReturn
 # check if stop is hit. If stop hit - set exit price and timestamp; otherwise - update stop 
-def updateTrade(trade, lastCandle, direction, session):
-    if  ((trade.direction == util.TickerStatus.LONG and lastCandle['low'] > trade['stop']) or
-        (direction == util.TickerStatus.SHORT and lastCandle['high'] <= trade['stop'])):
+def updateTrade(trade, chartDict, session):
+    if  ((trade['direction'] == util.TickerStatus.LONG and chartDict['d'][-1].low > trade['stop']) or
+        (trade['direction'] == util.TickerStatus.SHORT and chartDict['d'][-1].high < trade['stop'])):
         trade['daysOpen'] = trade['daysOpen'] + 1
-        trade['stop'] = getNewStop(trade, lastCandle, direction)
+        trade['stop'] = getNewStop(trade, chartDict)
 
     else:   # find time when stop hit, also check if we gapped stop
-        lastCandleTime = datetime.fromtimestamp(lastCandle['datetime']).replace(hour = 0) + timedelta(days = 1) # TD returns previous day 10pm as timestamp for daily candle; Alpaca return previous day 9pm
-        openCloseTimestamp_ms = util.getOpenCloseAtDay(datetime.timestamp(lastCandleTime)*1000)
+        #lastCandleTime = datetime.fromtimestamp(lastCandle['datetime']).replace(hour = 0) + timedelta(days = 1) # TD returns previous day 10pm as timestamp for daily candle; Alpaca return previous day 9pm
+        #openCloseTimestamp_ms = util.getOpenCloseAtDay(datetime.timestamp(lastCandleTime)*1000)
         #startTimestamp_ms = max(trade['entryTimestamp_ms'], openCloseTimestamp_ms['open'])
         #intradayData = session.get_price_history(symbol=trade['symbol'], period_type="day", period=None, frequency_type="minute", frequency=1, start_date=openCloseTimestamp_ms['open'], end_date=openCloseTimestamp_ms['close'], extended_hours=False)
         #intradayCandles = intradayData['candles']
-        intradayCandles = alpaca_chart.getChart(session, trade['symbol'], 'm1', openCloseTimestamp_ms['open']/1000, openCloseTimestamp_ms['close']/1000-1)
-        ii = 0
-        while ((direction == util.TickerStatus.LONG and intradayCandles[ii]['low'] >= trade['stop']) or \
-            (direction == util.TickerStatus.SHORT and intradayCandles[ii]['high'] <= trade['stop'])) and \
-            ii < len(intradayCandles):
-            ii = ii + 1
-        if ii == len(intradayCandles):  # this should never happen, print error and stop out at stop price
-            print('no exit found intraday but expected an exit based on daily chart')
+        #intradayCandles = alpaca_chart.getChart(session, trade['symbol'], 'm1', openCloseTimestamp_ms['open']/1000, openCloseTimestamp_ms['close']/1000-1)
+        tradeDay = mtm.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
+        intradayCandles = alpaca_chart.getChart(session, trade['symbol'], 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
+        # Find intraday candle when stop is hit
+        if trade['direction'] == util.TickerStatus.LONG:    # Bullish
+            if intradayCandles[0].open < trade['stop']: # check if we gapped the stop
+                entryID = -1
+            else:
+                entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.low > trade['stop']), None)
+        else:   # Bearish
+            if intradayCandles[0].open > trade['stop']: # check if we gapped the stop
+                entryID = -1
+            else:
+                entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high < trade['stop']), None)
+        if entryID is None:
+            print(f'No exit found intraday but expected an exit based on daily chart on daily chart on {tradeDay[0]}')
             trade['exitPrice'] = trade['stop']
-            #trade['daysOpen'] = trade['daysOpen'] + 1
-            #trade['stop'] = getNewStop(trade, lastCandle, direction)
+        elif entryID == -1: # stop gapped
+            trade['exitPrice'] = intradayCandles[0].open
+            trade['exitTimestamp_ms'] = intradayCandles[0].open_ts        
         else:   # stop hit, record exit price and time
-            if (direction == util.TickerStatus.LONG and intradayCandles[ii]['open'] < trade['stop']) or \
-            (direction == util.TickerStatus.SHORT and intradayCandles[ii]['open'] > trade['stop']): # if the price gapped through stop
-                trade['exitPrice'] = intradayCandles[ii]['open']
+            if (trade['direction'] == util.TickerStatus.LONG and intradayCandles[entryID].open < trade['stop']):    # price gapped the stop
+                trade['exitPrice'] = intradayCandles[entryID].open
+            elif (trade['direction'] == util.TickerStatus.SHORT and intradayCandles[entryID].open > trade['stop']):    # price gapped the stop
+                trade['exitPrice'] = intradayCandles[entryID].open
             else:
                 trade['exitPrice'] = trade['stop']
-            trade['exitTimestamp_ms'] = intradayCandles[ii]['datetime']
+            trade['exitTimestamp_ms'] = intradayCandles[entryID].open_ts
 
 # Compute stop assuming lastCandle did not trigger stop
 # If trade is open at the same day stop is 50% of trigger candle --> not covered by this function since we assume we are not stopped out at least at the day of entry
 # If trade is open in the previous day - stop is breakeven
 # If trade is open before previous day - stop is at low (long) or high (short) of previous candle       
-def getNewStop(trade, lastCandle, direction):
+def getNewStop(trade, chartDict):
     if trade['daysOpen'] == 1:
         return trade['entryPrice']
     else:
-        if direction == util.TickerStatus.LONG:
-            return lastCandle['low']
+        if trade['direction'] == util.TickerStatus.LONG:
+            return chartDict['d'][-1].low
         else:
-            return lastCandle['high']
+            return chartDict['d'][-1].high
 
 def printTrade(trade):
     #tradeToReturn = {'symbol': symbol, 'entryPrice': triggerPrice, 'entryTimestamp_ms': intradayCandles[ii]['datetime'], \
@@ -304,8 +314,8 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
 #       Update status of existing trades
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
-    startDay_str = "2024-11-24 6:30:00"
-    endDay_str = "2024-12-01 6:30:00"
+    startDay_str = "2025-01-01 6:30:00"
+    endDay_str = "2025-02-28 6:30:00"
     timezone = 'America/Los_Angeles'
     symbol = "SPY"
 
@@ -348,9 +358,9 @@ if __name__ == "__main__":
         printChart(chartDict)
 
         # Update trades
-        #for trade in trades:
-        #    if trade['exitPrice'] == - 1:
-        #        updateTrade(trade, dayCandle, direction, session)
+        for trade in trades:
+            if trade['exitPrice'] == - 1:
+                updateTrade(trade, chartDict, session)
 
         # Check for new trades
         # Strategy is implemented in enterTrade function
