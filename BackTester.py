@@ -5,6 +5,7 @@ import util
 import pandas as pd
 import MarketTimeManager as mtm
 import os
+import copy
 
 # TODO: ALL TIMESTAMPS ARE IN SECONDS, NOT MILLISECONDS - RESPECTIVE KEYS NEED TO BE UPDATED
 # Assumes candle1 is candle at T-2, candle2 is candle at T-1
@@ -254,7 +255,7 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
     chartDict['d'].append(dayCandleToAdd)
     # Weekly flip
     if w != last_w:
-        chartDict['w'].append(dayCandleToAdd)
+        chartDict['w'].append(copy.deepcopy(dayCandleToAdd))
         chartDict['w'][-1].previous_high = chartDict['w'][-2].high
         chartDict['w'][-1].previous_low = chartDict['w'][-2].low
     else:
@@ -264,7 +265,7 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
 
     # Monthly flip
     if m != last_m:
-        chartDict['m'].append(dayCandleToAdd)
+        chartDict['m'].append(copy.deepcopy(dayCandleToAdd))
         chartDict['m'][-1].previous_high = chartDict['m'][-2].high
         chartDict['m'][-1].previous_low = chartDict['m'][-2].low
     else:
@@ -274,7 +275,7 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
 
     # Quarterly flip
     if q != last_q:
-        chartDict['q'].append(dayCandleToAdd)
+        chartDict['q'].append(copy.deepcopy(dayCandleToAdd))
         chartDict['q'][-1].previous_high = chartDict['q'][-2].high
         chartDict['q'][-1].previous_low = chartDict['q'][-2].low
     else:
@@ -284,7 +285,7 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
 
     # Yearly flip
     if y != last_y:
-        chartDict['y'].append(dayCandleToAdd)
+        chartDict['y'].append(copy.deepcopy(dayCandleToAdd))
         chartDict['y'][-1].previous_high = chartDict['y'][-2].high
         chartDict['y'][-1].previous_low = chartDict['y'][-2].low
     else:
