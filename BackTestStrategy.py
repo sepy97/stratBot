@@ -6,7 +6,7 @@ class BackTestStrategy:
         self.ignoreIfGap = True
 
     # This function returns the trigger price, stop price, and direction of the trade. If gaps are allowed - then the trigger price is the open price of the current candle
-    def enterTrade(self, chartDict):
+    def getNewTrade(self, chartDict):
         
         # SimpleDailyAS strategy: if AS on D in force + TFC on D, W, M (taken at trigger price)
         # Actionable signals: 1-2, 2-2 reversal (so 2u-2d or 2d-2u). Gap over/under trigger should be ignored
@@ -43,17 +43,17 @@ class BackTestStrategy:
     def getStop(self, chartDict, trade):
         if self.name == "SimpleDailyAS":
             # SimpleDailyAS strategy: 
-            # If trade is open at the same day stop is 50% of trigger candle --> not covered by this function since we assume we are not stopped out at least at the day of entry
+            # If trade is open at the same day stop is 50% of trigger (previous) candle --> not covered by this function since we assume we are not stopped out at least at the day of entry
             # If trade is open in the previous day - stop is breakeven
             # If trade is open before previous day - stop is at low (long) or high (short) of previous candle
             if trade['daysOpen'] == 0:
-                return 0.5*(chartDict['d'][-1].high+chartDict['d'][-1].low)
+                return 0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low)
             elif trade['daysOpen'] == 1:
                 return trade['entryPrice']
             else:
                 if trade['direction'] == util.TickerStatus.LONG:
-                    return chartDict['d'][-1].low
+                    return chartDict['d'][-2].low
                 else:
-                    return chartDict['d'][-1].high
+                    return chartDict['d'][-2].high
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")

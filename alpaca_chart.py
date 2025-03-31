@@ -26,7 +26,7 @@ def initSession():
     stock_client = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     return stock_client
 
-# Returns a dictionary: {symbol: list of candles in chronological order (most recent candle last)}
+# Returns a dictionary: {symbol --> [list of candles in chronological order (most recent candle last)]}
 # First (oldest) candle in the list is the oldest candle that closes after start_timestamp (if start_timestamp is within the candle - it is the first candle; otherwise it is the next candle)
 # Last (oldest) candle in the list opens before end_timestamp and closes on end_timestamp (could be partial candle)
 # Supported TF: Y, Q, M, W, D, integer hours ('m60', 'm120', etc.), minutes ('m1', 'm5', 'm15', 'm30', etc.)
@@ -262,12 +262,21 @@ def getDailyChart(stock_client, symbol, start_timestamp, end_timestamp):
     bars.reset_index('symbol', inplace=True)
     return bars
 
+def printChart(chart, filename):
+    with open(filename, 'a') as f:
+        for sym in chart.keys():
+            f.write('Symbol: ' + sym + '\n')
+            for candle in chart[sym]:
+                f.write(candle.to_string_full() + '\n')
+
 if __name__ == "__main__":
     EST = 'America/New_York'
     pd.options.mode.copy_on_write = True
     session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     startDay = pd.to_datetime("2025-03-26 0:00:00").tz_localize(EST)
     endDay = pd.to_datetime("2025-03-27 9:32:00").tz_localize(EST)
+    watchlist = pd.read_csv('Watchlists/NASDAQ100_2025.csv', header = None)
+    watchlist = watchlist[0].to_list()
     #chart = session.get_stock_bars(StockBarsRequest(symbol_or_symbols=["SPY", "QQQ"], timeframe=TimeFrame(1, TimeFrameUnit.Day), start=startDay, end=endDay))
     #chart = session.get_stock_bars(StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame.Day, start=startDay, end=endDay))
     #chart = chart.df
@@ -276,11 +285,12 @@ if __name__ == "__main__":
     #chart_5min = aggregateMinuteChart(chart, 'd')
     #print(chart_5min)
     
-    chart = getChart(session, symbol_list=["SPY", "QQQ"], timeframe_sym='m30', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
-    for sym in chart.keys():
-        print('Hourly chart: ' + sym)
-        for candle in chart[sym]:
-            print(candle.to_string_full())
+    chart = getChart(session, symbol_list=watchlist, timeframe_sym='m30', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    printChart(chart, 'chart.txt')
+    #for sym in chart.keys():
+    #    print('Hourly chart: ' + sym)
+    #    for candle in chart[sym]:
+    #        print(candle.to_string_full())
     
     '''
     chart = getChart(session, symbol_list=["SPY", "QQQ"], timeframe_sym='d', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
