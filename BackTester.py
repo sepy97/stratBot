@@ -122,7 +122,27 @@ def printChartSingleSymbol(chartSingleSymbol, fileObject):
         fileObject.write(f"Timeframe: {tf}\n")
         for candle in chartSingleSymbol[tf]:
             fileObject.write(candle.to_string_full() + '\n')
-
+def printTradeDict(tradesDict, filename):
+    if os.path.exists(filename):
+        os.remove(filename)
+    tradesList = []
+    # Create a new file and write the header
+    for subset in tradesDict.values():
+        tradesList.extend(subset)
+    tradesList = pd.DataFrame(tradesList)
+    tradesList['exitPrice'] = tradesList['exitPrice'].replace(-1, None)
+    tradesList['exitTimestamp_sec'] = tradesList['exitTimestamp_sec'].replace(-1, None)
+    tradesList['gain %'] = tradesList['gain %'].replace(-1, None)
+    tradesList['entryTimestamp_sec'] = pd.to_datetime(tradesList['entryTimestamp_sec'], unit='s').dt.tz_localize('UTC').dt.tz_convert('America/New_York')
+    tradesList['exitTimestamp_sec'] = pd.to_datetime(tradesList['exitTimestamp_sec'], unit='s').dt.tz_localize('UTC').dt.tz_convert('America/New_York')
+    tradesList['entryPrice'] = tradesList['entryPrice'].astype(float)
+    tradesList['exitPrice'] = tradesList['exitPrice'].astype(float)
+    tradesList['stop'] = tradesList['stop'].astype(float)
+    tradesList['gain %'] = tradesList['gain %'].astype(float)
+    tradesList['daysOpen'] = tradesList['daysOpen'].astype(int)
+    tradesList['direction'] = tradesList['direction'].astype(str)
+    tradesList['symbol'] = tradesList['symbol'].astype(str)
+    tradesList.to_csv(filename, index=False)
 # This function updates all charts based on new daily candle. Assumes new candle is the next immediate candle after last_day
 # Starting chart (chartDict) must have at least one candle for each TF
 def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
@@ -185,9 +205,9 @@ def backtest_symbol(dailyChart, chartDict, symbol, session, strategy):
         dayDateToAdd = pd.to_datetime(dayCandleToAdd.open_ts, unit='s')
         chartDict = addDailyCandleToChart(chartDict, lastDay, dayCandleToAdd, dayDateToAdd)
         lastDay = dayDateToAdd
-        with open('chart.txt', 'a') as f:
-            f.write(f"==========={symbol}=============\n")
-            printChartSingleSymbol(chartDict, f)
+        #with open('chart.txt', 'a') as f:
+        #    f.write(f"==========={symbol}=============\n")
+        #    printChartSingleSymbol(chartDict, f)
 
         # Update trades
         for trade in trades:
@@ -201,8 +221,8 @@ def backtest_symbol(dailyChart, chartDict, symbol, session, strategy):
             trades.append(newTrade)
 
     # Log resulting trades
-    for trade in trades:
-        printTrade(trade)
+    #for trade in trades:
+    #    printTrade(trade)
     return trades 
 
 # Backtesting with limited number of queries for candle bars
@@ -218,13 +238,14 @@ if __name__ == "__main__":
     startDay_str = "2025-01-01 0:30:00"
     endDay_str = "2025-02-28 23:30:00"
     timezone = 'America/Los_Angeles'
-    symbol = "SPY"
-    watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
+    watchlist = pd.read_csv('Watchlists/NASDAQ100_2025.csv', header = None)
     watchlist = watchlist[0].to_list()
+    strategy_name = "SimpleDailyAS"
+    tradeLogFileName = "trades.csv"
     #TDSession = session.initTDSession()
     trades = []
     session = alpaca_chart.initSession()
-    strategy = bts("SimpleDailyAS")
+    strategy = bts(strategy_name)
 
     # Currently testing only Daily and higher TF strategy, so we simply truncate startDay to the beginning of the day and endDay to the end of the day
     startDay = pd.to_datetime(startDay_str).tz_localize(timezone).replace(hour=6, minute=30, second=0)
@@ -249,7 +270,7 @@ if __name__ == "__main__":
     lastDay = startDayToQuery[0]
     if os.path.exists('chart.txt'):
         os.remove('chart.txt')
-    printChart(chartDict, 'chart.txt')
+    #printChart(chartDict, 'chart.txt')
     
     symbol_valid = set(dailyChart.keys()) & set(chartDict.keys())
     symbol_invalid = set(dailyChart.keys()) ^ set(chartDict.keys())
@@ -260,32 +281,38 @@ if __name__ == "__main__":
     # Start backtesting for each symbol in parallel
     with mp.Pool() as pool:
         total_result = pool.starmap(partial(backtest_symbol, session=session, strategy=strategy), zip(dailyChart_candles, chartDict_candles, symbol_valid))
-    '''
-    # Start backtesting
-    for day_id in range(1, len(dailyChart)):
-        # Update charts
-        dayCandleToAdd = dailyChart[day_id]
-        dayDateToAdd = pd.to_datetime(dayCandleToAdd.open_ts, unit='s')
-        chartDict = addDailyCandleToChart(chartDict, lastDay, dayCandleToAdd, dayDateToAdd)
-        lastDay = dayDateToAdd
-        printChart(chartDict, 'chart.txt')
+    all_trades = {}
+    gain_summary = {}
+    for sublist in total_result:
+        pd.DataFrame(sublist).to_csv('trades.csv', mode='a', index=False)
+        for trade in sublist:
+            if trade['exitPrice'] == -1:
+                gain = 0
+                trade['gain %'] = None
+            else:
+                if (trade['direction'] == util.TickerStatus.LONG):
+                    trade['gain %'] = 100*(trade['exitPrice']/trade['entryPrice']-1)
+                else:
+                    trade['gain %'] = 100*(1- trade['exitPrice']/trade['entryPrice'])
+                gain = trade['gain %']
 
-        # Update trades
-        for trade in trades:
-            if trade['exitPrice'] == - 1:
-                updateTrade(trade, chartDict, session, strategy)
-
-        # Check for new trades
-        # Strategy is implemented in enterTrade function
-        newTrade = enterTrade(symbol, chartDict, session, strategy)
-        if bool(newTrade):
-            trades.append(newTrade)
-
-            
-    # Log resulting trades
-    for trade in trades:
-        printTrade(trade)
-    '''
+            if trade['symbol'] in all_trades:
+                all_trades[trade['symbol']].append(trade)
+                gain_summary[trade['symbol']] += gain
+            else:
+                all_trades[trade['symbol']] = [trade]
+                gain_summary[trade['symbol']] = gain
+    gain_summary = pd.DataFrame(gain_summary.items(), columns=['symbol', 'gain %'])
+    print('Backtesting summary:')
+    print('====================')
+    print(f'Time span: {startDay} to {endDay}')
+    print('Strategy: ' + strategy_name)
+    print('Symbols: ' + str(watchlist))
+    print(gain_summary)
+    print()
+    print(f'Trade details logged in {tradeLogFileName}')
+    printTradeDict(all_trades, tradeLogFileName)
+   
 
 
 
