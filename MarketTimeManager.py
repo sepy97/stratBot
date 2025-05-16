@@ -12,7 +12,17 @@ import pytz
 timeframe_LUT = {'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
 class MarketTimeManager:
     def __init__(self):
+
         self.trading_client = TradingClient(alpaca_config['key'], alpaca_config['secret_key'])  # or paper=False for live
+        tz = pytz.timezone('America/New_York')
+        calendar = self.trading_client.get_calendar()
+        self.calendar = pd.DataFrame([{'date': c.date, 'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in calendar])
+        self.calendar.index = self.calendar['date']
+        #if dateRange is None:
+        #    self.calendar_cache = None
+        #else:
+        #    cal = self.trading_client.get_calendar(GetCalendarRequest(start=pd.to_datetime(dateRange[0]).date(), end=pd.to_datetime(dateRange[1]).date()))
+        #    self.calendar_cache = pd.DataFrame([{'date': tz.localize(c.date), 'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in cal])
         #calendar = trading_client.get_calendar(GetCalendarRequest(start=date(2026, 1, 5), end=date(2026, 1, 5))) this returns a list of dictionaries in a form
         #[{   'close': datetime.datetime(2026, 1, 5, 16, 0),
         #     'date': datetime.date(2026, 1, 5),
@@ -191,76 +201,130 @@ class MarketTimeManager:
         #nyse = mcal.get_calendar('NYSE')
         tz = pytz.timezone('America/New_York')
         timestampDate = pd.to_datetime(timestamp_s, unit='s', utc=True).tz_convert('America/New_York')     # convert to Panda Datetime and ensure it is timezone-aware and in NY timezone
-
+        if timestampDate.date() < self.calendar.index[0] or timestampDate.date() > self.calendar.index[-1]:  # timestamp is outside of the calendar range
+            print(f"Timestamp {timestampDate} is outside of the calendar range")
+            return candleOpenCloseTime
         if timeframe_sym in ['m60', 'm30', 'm15', 'm5', 'm1']:
             period_s = int(timeframe_sym[1:])*60
             this_period_start = timestampDate.replace(hour=0, minute=0, second=0)
             this_period_end = timestampDate.replace(hour=23, minute=59, second=59)
+            period_date = timestampDate.date()
             # populate current candle
             #sch_day = nyse.schedule(start_date=this_period_start, end_date=this_period_end)
-            sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=this_period_start.date(), end=this_period_end.date()))
-            sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
-
-            if (not sch_day.empty) and (timestampDate >= sch_day.iloc[0]['market_open']) and (timestampDate < sch_day.iloc[0]['market_close']-pd.DateOffset(seconds=1)):   # timestamp falls within the candle - populate current candle
-                k = int((timestampDate - sch_day.iloc[0]['market_open']).total_seconds()/period_s)  # number of candles prior to timestamp 
-                candle_start = sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=k*period_s)
-                candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=(k+1)*period_s)) #- pd.DateOffset(seconds=1)
+            #sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=this_period_start.date(), end=this_period_end.date()))
+            #sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+            try:
+                sch_day = self.calendar.loc[timestampDate.date()]
+            except KeyError:
+                sch_day = None
+            if (not sch_day is None) and (timestampDate >= sch_day['market_open']) and (timestampDate < sch_day['market_close']-pd.DateOffset(seconds=1)):   # timestamp falls within the candle - populate current candle
+                k = int((timestampDate - sch_day['market_open']).total_seconds()/period_s)  # number of candles prior to timestamp 
+                candle_start = sch_day['market_open'] + pd.DateOffset(seconds=k*period_s)
+                candle_end = min(sch_day['market_close'], sch_day['market_open'] + pd.DateOffset(seconds=(k+1)*period_s)) #- pd.DateOffset(seconds=1)
                 candleOpenCloseTime['current'] = (candle_start, candle_end)
             # populate pre candles
             period_start = this_period_start
             period_end = this_period_end
             #sch_day = nyse.schedule(start_date=period_start, end_date=period_end)
-            sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=period_start.date(), end=period_end.date()))
-            sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+            #sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=period_start.date(), end=period_end.date()))
+            #sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+            try:
+                sch_day = self.calendar.loc[timestampDate.date()]
+            except KeyError:
+                sch_day = None
             candles_collected = 0
             timestampAdj = timestampDate    # this timestamp is less than a period past the close of candle we need to add
             while candles_collected < n_pre:
-                if sch_day.empty or timestampAdj < sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=period_s):   # timestamp falls on weekend/holiday or before open of the second candle of the day --> go to previous day
+                if sch_day is None or timestampAdj < sch_day['market_open'] + pd.DateOffset(seconds=period_s):   # timestamp falls on weekend/holiday or before open of the second candle of the day --> go to previous day
                     period_start = period_start - pd.DateOffset(days=1)
                     period_end = period_end - pd.DateOffset(days=1)
                     #sch_day = nyse.schedule(start_date=period_start, end_date=period_end)
-                    sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=period_start.date(), end=period_end.date()))
-                    sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+                    try:
+                        sch_day = self.calendar.loc[period_start.date()]
+                    except KeyError:    
+                        sch_day = None
+                    #sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=period_start.date(), end=period_end.date()))
+                    #sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
                 else:
-                    timestampAdj = min(timestampAdj, sch_day.iloc[0]['market_close'])   #timestamp after close --> shift to market close
-                    k = int((timestampAdj - sch_day.iloc[0]['market_open']).total_seconds()/period_s)
-                    if (timestampAdj >= sch_day.iloc[0]['market_close']) and (sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=k*period_s) < sch_day.iloc[0]['market_close']):    # account for situation when last candle of the day is partial (e.g. last 60min candle is only 30min long)
+                    timestampAdj = min(timestampAdj, sch_day['market_close'])   #timestamp after close --> shift to market close
+                    k = int((timestampAdj - sch_day['market_open']).total_seconds()/period_s)
+                    if (timestampAdj >= sch_day['market_close']) and (sch_day['market_open'] + pd.DateOffset(seconds=k*period_s) < sch_day['market_close']):    # account for situation when last candle of the day is partial (e.g. last 60min candle is only 30min long)
                         k = k + 1
-                    candle_start = sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=(k-1)*period_s)
-                    candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=k*period_s)) #- pd.DateOffset(seconds=1)
+                    candle_start = sch_day['market_open'] + pd.DateOffset(seconds=(k-1)*period_s)
+                    candle_end = min(sch_day['market_close'], sch_day['market_open'] + pd.DateOffset(seconds=k*period_s)) #- pd.DateOffset(seconds=1)
                     candleOpenCloseTime['pre'].append((candle_start, candle_end))
                     timestampAdj = candle_start
                     candles_collected += 1
+            
             # populate post candles
             period_start = this_period_start
             period_end = this_period_end
             #sch_day = nyse.schedule(start_date=period_start, end_date=period_end)
-            sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=period_start.date(), end=period_end.date()))
-            sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+            #sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=period_start.date(), end=period_end.date()))
+            #sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+            try:
+                sch_day = self.calendar.loc[timestampDate.date()]
+            except KeyError:
+                sch_day = None
             candles_collected = 0
             timestampAdj = timestampDate    # this timestamp is less than a period prior to the open of candle we need to add
             moveToNextDay = False
             while candles_collected < n_post:
-                if sch_day.empty or moveToNextDay:   # timestamp falls on weekend/holiday  --> go to next day
+                if sch_day is None or moveToNextDay:   # timestamp falls on weekend/holiday  --> go to next day
                     period_start = period_start + pd.DateOffset(days=1)
                     period_end = period_end + pd.DateOffset(days=1)
                     #sch_day = nyse.schedule(start_date=period_start, end_date=period_end)
-                    sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=period_start.date(), end=period_end.date()))
-                    sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+                    #sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=period_start.date(), end=period_end.date()))
+                    #sch_day = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+                    try:
+                        sch_day = self.calendar.loc[period_start.date()]
+                    except KeyError:
+                        sch_day = None
                     moveToNextDay = False
                 else:
-                    timestampAdj = max(timestampAdj, sch_day.iloc[0]['market_open']-pd.DateOffset(seconds=1))   # timestamp before open --> shift to last second before market open 
-                    k = int((timestampAdj - sch_day.iloc[0]['market_open']).total_seconds()/period_s + 1)
-                    candle_start = sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=k*period_s)
-                    if candle_start >= sch_day.iloc[0]['market_close']:
+                    timestampAdj = max(timestampAdj, sch_day['market_open']-pd.DateOffset(seconds=period_s))   # timestamp before open --> shift to last second before market open 
+                    k = int((timestampAdj - sch_day['market_open']).total_seconds()/period_s+1)
+                    candle_start = sch_day['market_open'] + pd.DateOffset(seconds=k*period_s)
+                    if candle_start >= sch_day['market_close']:
                         moveToNextDay = True
                         continue
-                    candle_end = min(sch_day.iloc[0]['market_close'], sch_day.iloc[0]['market_open'] + pd.DateOffset(seconds=(k+1)*period_s)) #- pd.DateOffset(seconds=1)
+                    candle_end = min(sch_day['market_close'], sch_day['market_open'] + pd.DateOffset(seconds=(k+1)*period_s)) #- pd.DateOffset(seconds=1)
                     candleOpenCloseTime['post'].append((candle_start, candle_end))
-                    timestampAdj = candle_end
+                    timestampAdj = candle_start
                     candles_collected += 1
-
+            
         elif timeframe_sym=='d':
+            try:
+                sch_day = self.calendar.loc[timestampDate.date()]
+            except KeyError:
+                sch_day = None
+            offset_pre = 0
+            offset_post = 0
+            if (not sch_day is None and timestampDate >= sch_day['market_open'] and timestampDate < sch_day['market_close']):   # timestamp falls within the candle - populate current candle
+                candleOpenCloseTime['current'] = (sch_day['market_open'], sch_day['market_close']) 
+            if not sch_day is None:
+                if timestampDate >= sch_day['market_close']:  # timestamp after the candle close, this period should be included into 'pre' list
+                    offset_pre = 1
+                if timestampDate < sch_day['market_open']:  # timestamp before the candle open, this period should be included into 'post' list
+                    offset_post = 1
+
+            # pre candles
+            start_pre = self.calendar.index.searchsorted(timestampDate.date(), side='left')-1 + offset_pre
+            for ii in range(n_pre):
+                if start_pre-ii < 0:
+                    break
+                sch_day = self.calendar.iloc[start_pre-ii]
+                if (not sch_day.empty):
+                    candleOpenCloseTime['pre'].append((sch_day['market_open'], sch_day['market_close']))
+            # post candles
+            start_post = self.calendar.index.searchsorted(timestampDate.date(), side='right') - offset_post
+            for ii in range(n_post):
+                if start_post+ii >= len(self.calendar.index):
+                    break
+                sch_day = self.calendar.iloc[start_post+ii]
+                if (not sch_day.empty):
+                    candleOpenCloseTime['post'].append((sch_day['market_open'], sch_day['market_close']))
+            '''
             this_period_start = timestampDate.replace(hour=0, minute=0, second=0)
             this_period_end = timestampDate.replace(hour=23, minute=59, second=59)
             period_offset = pd.DateOffset(days=1)        
@@ -296,7 +360,7 @@ class MarketTimeManager:
             if (not this_sch.empty) and (timestampDate < this_sch.iloc[0]['market_close']) and (timestampDate >= this_sch.iloc[0]['market_open']):   # Timestamp falls within the candle - populate current candle
                 #candleOpenCloseTime['current'] = (this_sch.iloc[0]['market_open'], this_sch.iloc[-1]['market_close'] - pd.DateOffset(seconds=1))
                 candleOpenCloseTime['current'] = (this_sch.iloc[0]['market_open'], this_sch.iloc[-1]['market_close'])
-
+            '''
         else:
             # Yearly, Quarterly, Monthly, Weekly
             offset_pre = 1  # offset from current date to previous candles (set to 0 if timestamp is after the candle close to include this period to 'pre' list)
@@ -323,20 +387,30 @@ class MarketTimeManager:
                 this_period_start = timestampDate.replace(hour=0, minute=0, second=0) - pd.Timedelta(days=timestampDate.weekday())
                 #this_period_end = timestampDate.replace(hour=23, minute=59, second=59) + pd.Timedelta(days=6-timestampDate.weekday())
                 period_offset = pd.DateOffset(days=7)
+
             this_period_end = this_period_start + period_offset - offset_1sec
             #schedule_start = nyse.schedule(start_date=this_period_start, end_date=this_period_start+offset_7days)
-            sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=this_period_start.date(), end=(this_period_start+offset_7days).date()))
-            schedule_start = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+            #sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=this_period_start.date(), end=(this_period_start+offset_7days).date()))
+            #schedule_start = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
             #schedule_end = nyse.schedule(start_date=this_period_end-offset_7days, end_date=this_period_end)
-            sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=(this_period_end-offset_7days).date(), end=this_period_end.date()))
-            schedule_end = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+            #sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=(this_period_end-offset_7days).date(), end=this_period_end.date()))
+            #schedule_end = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
+            schedule_start_id = self.calendar.index.searchsorted(this_period_start.date(), side='left')
+            schedule_end_id = self.calendar.index.searchsorted(this_period_end.date(), side='right')-1
+            #if schedule_start_id is None or schedule_end_id is None:
+            #    print(f"Timestamp {timestampDate} is outside of the calendar range")
+            #    return candleOpenCloseTime
 
-
-            if timestampDate >= schedule_end.iloc[-1]['market_close']:  # timestamp after the candle close, this period should be included into 'pre' list
+            if timestampDate >= self.calendar.iloc[schedule_end_id]['market_close']:  # timestamp after the candle close, this period should be included into 'pre' list
                 offset_pre = 0
-            if timestampDate < schedule_start.iloc[0]['market_open']:  # timestamp before the candle open, this period should be included into 'post' list
+            if timestampDate < self.calendar.iloc[schedule_start_id]['market_open']:  # timestamp before the candle open, this period should be included into 'post' list
                 offset_post = 0
             for ii in range(offset_pre, n_pre+offset_pre):  # Populate previous candles
+                candle_start_id = self.calendar.index.searchsorted((this_period_start-ii*period_offset).date(), side='left')
+                candle_end_id = self.calendar.index.searchsorted((this_period_start-(ii-1)*period_offset-offset_1sec).date(), side='right')-1
+            #TODO - check if candle start is within the calendar range
+                candleOpenCloseTime['pre'].append((self.calendar.iloc[candle_start_id]['market_open'], self.calendar.iloc[candle_end_id]['market_close']))
+                '''
                 #candle_start = nyse.schedule(start_date=this_period_start-ii*period_offset, end_date=this_period_start-ii*period_offset+offset_7days)
                 sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=(this_period_start-ii*period_offset).date(), end=(this_period_start-ii*period_offset+offset_7days).date()))
                 candle_start =  pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
@@ -348,7 +422,13 @@ class MarketTimeManager:
                 candle_end =  pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
                 candle_end = candle_end.iloc[-1]['market_close'] #- offset_1sec
                 candleOpenCloseTime['pre'].append((candle_start, candle_end))
+                '''
             for ii in range(offset_post, n_post+offset_post):   # Populate future candles
+                candle_start_id = self.calendar.index.searchsorted((this_period_start+ii*period_offset).date(), side='left')
+                candle_end_id = self.calendar.index.searchsorted((this_period_start+(ii+1)*period_offset-offset_1sec).date(), side='right')-1
+                #TODO - check if candle end is within the calendar range
+                candleOpenCloseTime['post'].append((self.calendar.iloc[candle_start_id]['market_open'], self.calendar.iloc[candle_end_id]['market_close']))
+                '''
                 #candle_start = nyse.schedule(start_date=this_period_start+ii*period_offset, end_date=this_period_start+ii*period_offset+offset_7days)
                 sch_day = self.trading_client.get_calendar(GetCalendarRequest(start=(this_period_start+ii*period_offset).date(), end=(this_period_start+ii*period_offset+offset_7days).date()))
                 candle_start = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
@@ -360,9 +440,10 @@ class MarketTimeManager:
                 candle_end = pd.DataFrame([{'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in sch_day])
 
                 candle_end = candle_end.iloc[-1]['market_close'] #- offset_1sec
-                candleOpenCloseTime['post'].append((candle_start, candle_end))        
-            if (timestampDate < schedule_end.iloc[-1]['market_close'] and timestampDate >= schedule_start.iloc[0]['market_open']):   # Timestamp falls within the candle - populate current candle
-                candleOpenCloseTime['current'] = (schedule_start.iloc[0]['market_open'], schedule_end.iloc[-1]['market_close']) #- pd.DateOffset(seconds=1))
+                candleOpenCloseTime['post'].append((candle_start, candle_end))  
+                '''      
+            if (timestampDate < self.calendar.iloc[schedule_end_id]['market_close'] and timestampDate >= self.calendar.iloc[schedule_start_id]['market_open']):   # Timestamp falls within the candle - populate current candle
+                candleOpenCloseTime['current'] = (self.calendar.iloc[schedule_start_id]['market_open'], self.calendar.iloc[schedule_end_id]['market_close']) #- pd.DateOffset(seconds=1))
         
         # convert all timestamps to desired timezone
         for ii in range(len(candleOpenCloseTime['pre'])):
@@ -375,9 +456,9 @@ class MarketTimeManager:
 
 if __name__ == "__main__":
     #TF = 'm15'
-    timestamp_dt = pd.to_datetime("2024-12-30 7:30:00").tz_localize('America/Los_Angeles')
+    timestamp_dt = pd.to_datetime("2024-1-2 1:00:00").tz_localize('America/Los_Angeles')
     timestamp_s = timestamp_dt.timestamp()
-    TF = 'm'
+    TF = 'm15'
     mtm = MarketTimeManager()
     #timestamp_s = 1732026600.0
     candleSet = mtm.getCandleOpenCloseTime(timestamp_s, TF, 3, 4)
