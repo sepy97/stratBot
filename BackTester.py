@@ -31,7 +31,7 @@ def enterTrade(sym, chartDict, session, strategy):
         entryLbl = "short"
     
     # Find the exact time of entry
-    tradeDay = mtm.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
+    tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
     intradayCandles = session.getChart([sym], 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
     intradayCandles = intradayCandles[sym]
     if direction == util.TickerStatus.LONG:
@@ -66,7 +66,7 @@ def updateTrade(trade, chartDict, session, strategy):
     # Find time when stop hit, also check if we gapped stop
     if  ((trade['direction'] == util.TickerStatus.LONG and chartDict['d'][-1].low <= trade['stop']) or
         (trade['direction'] == util.TickerStatus.SHORT and chartDict['d'][-1].high >= trade['stop'])):
-        tradeDay = mtm.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
+        tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
         intradayCandles = session.getChart([trade['symbol']], 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
         intradayCandles = intradayCandles[trade['symbol']]
         # Find intraday candle when stop is hit
@@ -236,7 +236,7 @@ def backtest_symbol(dailyChart, chartDict, symbol, session, strategy):
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
     startDay_str = "2025-01-01 0:30:00"
-    endDay_str = "2025-02-28 23:30:00"
+    endDay_str = "2025-01-10 23:30:00"
     timezone = 'America/Los_Angeles'
     watchlist = pd.read_csv('Watchlists/NASDAQ100_2025.csv', header = None)
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
@@ -246,9 +246,10 @@ if __name__ == "__main__":
     #TDSession = session.initTDSession()
     trades = []
     #mgr = mp.Manager()
-    session = DataRetrieval()
+    mtm = mtm.MarketTimeManager()
+    session = DataRetrieval(market_time_manager=mtm)
     strategy = bts(strategy_name)
-
+    
     # Currently testing only Daily and higher TF strategy, so we simply truncate startDay to the beginning of the day and endDay to the end of the day
     startDay = pd.to_datetime(startDay_str).tz_localize(timezone).replace(hour=6, minute=30, second=0)
     endDay = pd.to_datetime(endDay_str).tz_localize(timezone).replace(hour=23, minute=59, second=0)

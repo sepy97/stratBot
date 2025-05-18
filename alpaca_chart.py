@@ -12,8 +12,12 @@ import MarketTimeManager as mtm
 class DataRetrieval:
     #_lock = None
     #_manager = None
-    def __init__(self):
+    def __init__(self, market_time_manager=None):
         self.session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
+        if market_time_manager is None:
+            self.market_time_manager = mtm.MarketTimeManager()
+        else:
+            self.market_time_manager = market_time_manager
         #self.manager = mp.Manager()
         #self._lock = lock
         #if DataRetrieval._lock is None:
@@ -74,7 +78,7 @@ class DataRetrieval:
 # start = 14:55:01, end = 14:59:59, timeframe = 5min: no candle is returned
 # getCalendarOpenCloseTime returns the beginning of the actual bar whereas Alpaca takes calendar dates (for example, if first trading day of a month is 3rd then requesting monthly candle from 3rd of that month will return next month candle)
 # Note: we need to pull one extra candle prior to the sequence so as to identify whether the first candle is 1, 2, or 3
-    def getChart(self, symbol_list, timeframe_sym, start_timestamp, end_timestamp, market_time_manager):
+    def getChart(self, symbol_list, timeframe_sym, start_timestamp, end_timestamp):
         EST = 'America/New_York'
         PST = "America/Los_Angeles"
         intraday = False
@@ -94,12 +98,12 @@ class DataRetrieval:
         #   If start_timestamp is before candle open and after previous close (outside of market hours) --> need to pull one previous candle to get previous low and high
         #   If start_timestamp is after candle open and before candle close (falls within candle range) --> previous low and high are defined by the most recent previous candle
         # Note: MarketTimeManager always ignores premarket and afterhours times, so below will correctly return previous candle for all timeframes (including intraday)
-        start_time_query = market_time_manager.getCandleOpenCloseTime(timestamp_s=start_timestamp, timeframe_sym=timeframe_sym, n_pre=1, n_post=0)
+        start_time_query = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=start_timestamp, timeframe_sym=timeframe_sym, n_pre=1, n_post=0)
         start_time_query = start_time_query['pre'][0]
         start_time_query = start_time_query[0]
 
         # Identify timespan of the last partial candle
-        end_time_query = market_time_manager.getCandleOpenCloseTime(timestamp_s=end_timestamp, timeframe_sym=timeframe_sym, n_pre=1, n_post=0)
+        end_time_query = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=end_timestamp, timeframe_sym=timeframe_sym, n_pre=1, n_post=0)
         # Get the end of the last complete candle
         end_time_complete_candle = end_time_query['pre'][0]
         end_time_complete_candle = end_time_complete_candle[1]
@@ -117,7 +121,7 @@ class DataRetrieval:
             # - If end_time is within market hours, then get the last partial daily candle from 1min bars; 
             # - For TF higher than D, get complete D candles comprising the partial candle and then add the last partial D candle from previous step
 
-            end_time_daily = market_time_manager.getCandleOpenCloseTime(timestamp_s=end_timestamp, timeframe_sym='d', n_pre=1, n_post=0)
+            end_time_daily = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=end_timestamp, timeframe_sym='d', n_pre=1, n_post=0)
             # If end_time is during market hours and is at least 1min after open, build last D partial candle from 1min bars
             if (end_time_daily['current'] is not None) and (end_time_daily['current'][0] <= end_time-pd.DateOffset(minutes=1)):   
                 # Always pull 1min bars starting from market open to get proper aggregation
@@ -228,8 +232,8 @@ class DataRetrieval:
             bars = pd.concat([bars, bars_last]).sort_index()
         if intraday:
             # For intraday, Alpaca includes candles outside of market hours, so we need to drop those
-            day_count = (end_timestamp - start_timestamp)/(24*60*60) + 2    # to ensure we include partial days corresponding to start and end timestamps
-            candle_ranges = market_time_manager.getCandleOpenCloseTime(timestamp_s=end_timestamp+24*60*60, timeframe_sym='d', n_pre=day_count, n_post=0)
+            day_count = int((end_timestamp - start_timestamp)/(24*60*60)) + 3    # to ensure we include partial days corresponding to start and end timestamps. #TODO: how many days to add?
+            candle_ranges = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=end_timestamp+24*60*60, timeframe_sym='d', n_pre=day_count, n_post=0)
             candle_ranges = candle_ranges['pre'] 
             bars = bars[bars.index.get_level_values('timestamp').to_series().apply(lambda ts: any(start_dt <= ts < end_dt for start_dt, end_dt in candle_ranges)).values]
             bars = self.aggregateChart(bars, timeframe_symbol=timeframe_sym)
@@ -353,8 +357,8 @@ if __name__ == "__main__":
     EST = 'America/New_York'
     pd.options.mode.copy_on_write = True
     #session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
-    session = DataRetrieval()
     time_manager = mtm.MarketTimeManager()
+    session = DataRetrieval(market_time_manager=time_manager)
     startDay = pd.to_datetime("2025-04-15 9:29:00").tz_localize(EST)
     endDay = pd.to_datetime("2025-04-15 11:32:00").tz_localize(EST)
     watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
@@ -363,42 +367,42 @@ if __name__ == "__main__":
     #chart = chart.df
     #print(chart)
 
-    chart = session.getChart(symbol_list=watchlist, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp(), market_time_manager=time_manager)
+    chart = session.getChart(symbol_list=watchlist, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Hourly chart: ')
     for ticker in chart.keys():
         print('Symbol: ' + ticker)
         for candle in chart[ticker]:
             print(candle.to_string_full())
 
-    chart = session.getChart(symbol_list=watchlist, timeframe_sym='d', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp(), market_time_manager=time_manager)
+    chart = session.getChart(symbol_list=watchlist, timeframe_sym='d', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Daily chart: ')
     for ticker in chart.keys():
         print('Symbol: ' + ticker)
         for candle in chart[ticker]:
             print(candle.to_string_full())
     
-    chart = session.getChart(symbol_list=watchlist, timeframe_sym='w', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp(), market_time_manager=time_manager)
+    chart = session.getChart(symbol_list=watchlist, timeframe_sym='w', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Weekly chart: ')
     for ticker in chart.keys():
         print('Symbol: ' + ticker)
         for candle in chart[ticker]:
             print(candle.to_string_full())
 
-    chart = session.getChart(symbol_list=watchlist, timeframe_sym='m', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp(), market_time_manager=time_manager)
+    chart = session.getChart(symbol_list=watchlist, timeframe_sym='m', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Monthly chart: ')
     for ticker in chart.keys():
         print('Symbol: ' + ticker)
         for candle in chart[ticker]:
             print(candle.to_string_full())
 
-    chart = session.getChart(symbol_list=watchlist, timeframe_sym='q', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp(), market_time_manager=time_manager)
+    chart = session.getChart(symbol_list=watchlist, timeframe_sym='q', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Quarterly chart: ')
     for ticker in chart.keys():
         print('Symbol: ' + ticker)
         for candle in chart[ticker]:
             print(candle.to_string_full())
 
-    chart = session.getChart(symbol_list=watchlist, timeframe_sym='y', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp(), market_time_manager=time_manager)
+    chart = session.getChart(symbol_list=watchlist, timeframe_sym='y', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Yearly chart: ')
     for ticker in chart.keys():
         print('Symbol: ' + ticker)
