@@ -1,5 +1,4 @@
 import pandas as pd
-from collections import defaultdict
 import MarketTimeManager as mtm
 # Parsing CSV of earnings calendar
 # Column names are: 
