@@ -253,7 +253,8 @@ if __name__ == "__main__":
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
     watchlist = watchlist[0].to_list()
     strategy_name = "SimpleDailyAS"
-    tradeLogFileName = "trades_test.csv"
+    tradeLogFileName = "./Trades/trades_test.csv"
+    os.makedirs('./Trades/', exist_ok=True)
     #TDSession = session.initTDSession()
     trades = []
     #mgr = mp.Manager()
@@ -303,7 +304,7 @@ if __name__ == "__main__":
     all_trades = {}
     gain_summary = {}
     for sublist in total_result:
-        pd.DataFrame(sublist).to_csv('trades.csv', mode='a', index=False)
+        #pd.DataFrame(sublist).to_csv('trades.csv', mode='a', index=False)
         for trade in sublist:
             if trade['exitPrice'] == -1:
                 gain = 0
@@ -330,9 +331,10 @@ if __name__ == "__main__":
     print('Symbols: ' + str(watchlist))
     print(gain_summary)
     print()
+    printTradeDict(all_trades, tradeLogFileName)
     print(f'Trade details logged in {tradeLogFileName}')
     print('====================')
-    printTradeDict(all_trades, tradeLogFileName)
+
    
 
 
