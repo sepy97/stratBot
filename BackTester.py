@@ -49,7 +49,7 @@ def enterTrade(sym, chartDict, session, strategy, er_list):
                 'stop': stopPrice, 'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp, 
                 'daysOpen': daysOpen, 'direction': direction, 
                 'entry_comment': entry_comment, 'exit_comment': exit_comment}
-    
+    # TODO: this is where stop should be defined, not earlier. This way we don't need to find stop in the getNewTrade function
     # Check if stop out the same day (for efficiency, so we don't pull the same 1min data from API again)
     if direction == util.TickerStatus.LONG:
         exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.low <= stopPrice), None)
@@ -244,16 +244,16 @@ def backtest_symbol(dailyChart, chartDict, symbol, er_list, session, strategy):
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
     startDay_str = "2025-01-01 0:30:00"
-    endDay_str = "2025-01-30 23:30:00"
+    endDay_str = "2025-04-30 23:30:00"
     timezone = 'America/Los_Angeles'
     earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_2025-05-18.csv'
-    #watchlist_name = 'NASDAQ100_2025'
-    watchlist_name = 'test_wl'
+    watchlist_name = 'NASDAQ100_2025'
+    #watchlist_name = 'test_wl'
     watchlist = pd.read_csv('Watchlists/' + watchlist_name + '.csv', header = None)
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
     watchlist = watchlist[0].to_list()
-    strategy_name = "SimpleDailyAS"
-    tradeLogFileName = "./Trades/trades_test.csv"
+    strategy_name = "SimpleAS_DailyTFCStop"
+    tradeLogFileName = "./Trades/trades_" + startDay_str.split(' ')[0].replace('-', '') + "_" + endDay_str.split(' ')[0].replace('-', '') + "_" + watchlist_name + "_" + strategy_name + ".csv"
     os.makedirs('./Trades/', exist_ok=True)
     #TDSession = session.initTDSession()
     trades = []
