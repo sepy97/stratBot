@@ -13,11 +13,6 @@ class BackTestStrategy:
         # Actionable signals: 1-2, 2-2 reversal (so 2u-2d or 2d-2u). Gap over/under trigger should be ignored
         if self.name == "SimpleDailyAS":
             validTrade = False
-            isLastDayBeforeER = pd.to_datetime(chartDict['d'][-1].open_ts, unit='s', utc=True).date() in er_list
-            exit_comment = ""
-            if isLastDayBeforeER:
-                exit_comment = f"Last day before ER - {pd.to_datetime(chartDict['d'][-1].open_ts, unit='s', utc=True).date()}| "
-            stopPrice = 0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low)    # stop is 50% of trigger candle (will use only if actional signal is there)
             if (    # bullish
                 # Previous candle is 1 or 2d (bullish)
                 ((chartDict['d'][-2].get_kind() == "2" and chartDict['d'][-2].get_subtype() == "D") or chartDict['d'][-2].get_kind() == "1") and
@@ -31,9 +26,6 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDict['d'][-2].high
                 direction = util.TickerStatus.LONG
-                if isLastDayBeforeER:
-                    stopPrice = max(stopPrice, chartDict['d'][-1].close)
-                #return chartDict['d'][-2].high, stopPrice, util.TickerStatus.LONG, entry_comment, exit_comment
             elif (  # bearish
                 # Previous candle is 1 or 2u (bearish)
                 ((chartDict['d'][-2].get_kind() == "2" and chartDict['d'][-2].get_subtype() == "U") or chartDict['d'][-2].get_kind() == "1") and
@@ -47,10 +39,6 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDict['d'][-2].low
                 direction = util.TickerStatus.SHORT
-                if isLastDayBeforeER:
-                    stopPrice = min(stopPrice, chartDict['d'][-1].close)
-                #return chartDict['d'][-2].low, stopPrice, util.TickerStatus.SHORT, entry_comment, exit_comment
-            
             if validTrade:
                 # Build list of candle combos at each timeframe
                 entry_comment = ("D: " + chartDict['d'][-2].to_string() + "-" + chartDict['d'][-1].to_string() + 
@@ -64,19 +52,14 @@ class BackTestStrategy:
                         entry_comment += "G|"
                     else:
                         entry_comment += "R|"
-                return triggerPrice, stopPrice, direction, entry_comment, exit_comment
+                return triggerPrice, direction, entry_comment
             else:
-                return None, None, None, None, None
+                return None, None, None
 
         # Same as SimpleDailyAS strategy: if AS on D in force + TFC on D, W, M (taken at trigger price). Note: stop is the closer of 50% of trigger candle or daily TFC flip
         # Actionable signals: 1-2, 2-2 reversal (so 2u-2d or 2d-2u). Gap over/under trigger should be ignored
         elif self.name == "SimpleAS_DailyTFCStop":
             validTrade = False
-            isLastDayBeforeER = pd.to_datetime(chartDict['d'][-1].open_ts, unit='s', utc=True).date() in er_list
-            exit_comment = ""
-            if isLastDayBeforeER:
-                exit_comment = f"Last day before ER - {pd.to_datetime(chartDict['d'][-1].open_ts, unit='s', utc=True).date()}| "
-            
             if (    # bullish
                 # Previous candle is 1 or 2d (bullish)
                 ((chartDict['d'][-2].get_kind() == "2" and chartDict['d'][-2].get_subtype() == "D") or chartDict['d'][-2].get_kind() == "1") and
@@ -90,9 +73,6 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDict['d'][-2].high
                 direction = util.TickerStatus.LONG
-                stopPrice = max(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open)    # stop is 50% of trigger candle or daily TFC flip (will use only if actional signal is there)
-                if isLastDayBeforeER:
-                    stopPrice = max(stopPrice, chartDict['d'][-1].close)
             elif (  # bearish
                 # Previous candle is 1 or 2u (bearish)
                 ((chartDict['d'][-2].get_kind() == "2" and chartDict['d'][-2].get_subtype() == "U") or chartDict['d'][-2].get_kind() == "1") and
@@ -106,10 +86,6 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDict['d'][-2].low
                 direction = util.TickerStatus.SHORT
-                stopPrice = min(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open)    # stop is 50% of trigger candle or daily TFC flip (will use only if actional signal is there)
-                if isLastDayBeforeER:
-                    stopPrice = min(stopPrice, chartDict['d'][-1].close)
-                #return chartDict['d'][-2].low, stopPrice, util.TickerStatus.SHORT, entry_comment, exit_comment
             
             if validTrade:
                 # Build list of candle combos at each timeframe
@@ -124,9 +100,9 @@ class BackTestStrategy:
                         entry_comment += "G|"
                     else:
                         entry_comment += "R|"
-                return triggerPrice, stopPrice, direction, entry_comment, exit_comment
+                return triggerPrice, direction, entry_comment
             else:
-                return None, None, None, None, None
+                return None, None, None
 
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
@@ -139,7 +115,7 @@ class BackTestStrategy:
             exitComment = f"Last day before ER - {pd.to_datetime(chartDict['d'][-1].open_ts, unit='s', utc=True).date()}| "
         if self.name == "SimpleDailyAS":
             # SimpleDailyAS strategy: 
-            # If trade is open at the same day stop is 50% of trigger (previous) candle --> not covered by this function since we assume we are not stopped out at least at the day of entry
+            # If trade is open at the same day stop is 50% of trigger (previous) candle 
             # If trade is open in the previous day - stop is breakeven
             # If trade is open before previous day - stop is at low (long) or high (short) of previous candle
             if trade['daysOpen'] == 0:
@@ -173,7 +149,7 @@ class BackTestStrategy:
                         return chartDict['d'][-2].high, exitComment
         elif self.name == "SimpleAS_DailyTFCStop":
             # Same as SimpleDailyAS strategy but with extra stop at Day 0 if Daily TFC flips
-            # If trade is open at the same day stop is 50% of trigger (previous) candle --> not covered by this function since we assume we are not stopped out at least at the day of entry
+            # If trade is open at the same day stop is 50% of trigger (previous) candle 
             # If trade is open in the previous day - stop is breakeven
             # If trade is open before previous day - stop is at low (long) or high (short) of previous candle
             if trade['daysOpen'] == 0:

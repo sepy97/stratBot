@@ -23,7 +23,7 @@ def enterTrade(sym, chartDict, session, strategy, er_list):
     exitTimestamp = -1
     daysOpen = 0
 
-    triggerPrice, stopPrice, direction, entry_comment, exit_comment = strategy.getNewTrade(chartDict, er_list)
+    triggerPrice, direction, entry_comment = strategy.getNewTrade(chartDict, er_list)
     if direction is None:
         return tradeToReturn
     elif direction == util.TickerStatus.LONG:
@@ -46,10 +46,13 @@ def enterTrade(sym, chartDict, session, strategy, er_list):
         entryTimestamp = intradayCandles[entryID].open_ts
 
     tradeToReturn = {'symbol': sym, 'entryPrice': triggerPrice, 'entryTimestamp_sec': entryTimestamp, 
-                'stop': stopPrice, 'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp, 
+                'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp, 
                 'daysOpen': daysOpen, 'direction': direction, 
-                'entry_comment': entry_comment, 'exit_comment': exit_comment}
-    # TODO: this is where stop should be defined, not earlier. This way we don't need to find stop in the getNewTrade function
+                'entry_comment': entry_comment}
+    # Get stop on the day of entry
+    stopPrice, exit_comment = strategy.getStop(chartDict, tradeToReturn, er_list)
+    tradeToReturn['stop'] = stopPrice
+    tradeToReturn['exit_comment'] = exit_comment
     # Check if stop out the same day (for efficiency, so we don't pull the same 1min data from API again)
     if direction == util.TickerStatus.LONG:
         exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.low <= stopPrice), None)
