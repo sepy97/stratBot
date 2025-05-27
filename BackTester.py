@@ -255,7 +255,7 @@ if __name__ == "__main__":
     watchlist = pd.read_csv('Watchlists/' + watchlist_name + '.csv', header = None)
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
     watchlist = watchlist[0].to_list()
-    strategy_name = "SimpleAS_DailyTFCStop"
+    strategy_name = "SimpleAS_DailyTFCOrPCTStop"
     tradeLogFileName = "./Trades/trades_" + startDay_str.split(' ')[0].replace('-', '') + "_" + endDay_str.split(' ')[0].replace('-', '') + "_" + watchlist_name + "_" + strategy_name + ".csv"
     os.makedirs('./Trades/', exist_ok=True)
     #TDSession = session.initTDSession()
