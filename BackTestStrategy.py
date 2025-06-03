@@ -7,171 +7,189 @@ class BackTestStrategy:
         self.ignoreIfGap = True
 
     # This function returns the trigger price, stop price, and direction of the trade. If gaps are allowed - then the trigger price is the open price of the current candle
-    def getNewTrade(self, chartDict, er_list):
-        
+    #   chartDictNew - dictionary with new chart data (including this day candle which may trigger a trade)
+    #   chartDictOld - dictionary with old chart data (up to and including previous day candle)
+    def getNewTrade(self, chartDictNew, chartDictOld):
+        validTrade = False
         # SimpleDailyAS strategy: if AS on D in force + TFC on D, W, M (taken at trigger price)
         # Actionable signals: 1-2, 2-2 reversal (so 2u-2d or 2d-2u). Gap over/under trigger should be ignored
         if self.name == "SimpleDailyAS" or self.name == "SimpleAS_DailyTFCStop" or self.name == "SimpleAS_DailyTFCOrPCTStop":
-            validTrade = False
             if (    # bullish
                 # Previous candle is 1 or 2d (bullish)
-                ((chartDict['d'][-2].get_kind() == "2" and chartDict['d'][-2].get_subtype() == "D") or chartDict['d'][-2].get_kind() == "1") and
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "D") or chartDictNew['d'][-2].get_kind() == "1") and
                 # Current candle is 2u (bullish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
-                ((chartDict['d'][-1].get_kind() == "2" and chartDict['d'][-1].get_subtype() == "U") or chartDict['d'][-1].get_kind() == "3") and
-                # Check TFC - previous D high is the trigger price. Note that checking D continuity also ensures no gap over trigger
-                (chartDict['d'][-1].open <= chartDict['d'][-2].high) and
-                (chartDict['w'][-1].open <= chartDict['d'][-2].high) and
-                (chartDict['m'][-1].open <= chartDict['d'][-2].high)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "U") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Check TFC - previous D high is the trigger price, should be greater than open on the most recent D/W/M candles. 
+                # Note that checking D continuity also ensures no gap over trigger
+                (chartDictNew['d'][-1].open <= chartDictNew['d'][-2].high) and
+                (chartDictNew['w'][-1].open <= chartDictNew['d'][-2].high) and
+                (chartDictNew['m'][-1].open <= chartDictNew['d'][-2].high)
             ):
                 validTrade = True
-                triggerPrice = chartDict['d'][-2].high
+                triggerPrice = chartDictNew['d'][-2].high
                 direction = util.TickerStatus.LONG
             elif (  # bearish
                 # Previous candle is 1 or 2u (bearish)
-                ((chartDict['d'][-2].get_kind() == "2" and chartDict['d'][-2].get_subtype() == "U") or chartDict['d'][-2].get_kind() == "1") and
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U") or chartDictNew['d'][-2].get_kind() == "1") and
                 # Current candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
-                ((chartDict['d'][-1].get_kind() == "2" and chartDict['d'][-1].get_subtype() == "D") or chartDict['d'][-1].get_kind() == "3") and
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "D") or chartDictNew['d'][-1].get_kind() == "3") and
                 # Check TFC - previous D low is the trigger price. Note that checking D continuity also ensures no gap under trigger
-                (chartDict['d'][-1].open >= chartDict['d'][-2].low) and
-                (chartDict['w'][-1].open >= chartDict['d'][-2].low) and
-                (chartDict['m'][-1].open >= chartDict['d'][-2].low)
+                (chartDictNew['d'][-1].open >= chartDictNew['d'][-2].low) and
+                (chartDictNew['w'][-1].open >= chartDictNew['d'][-2].low) and
+                (chartDictNew['m'][-1].open >= chartDictNew['d'][-2].low)
             ):
                 validTrade = True
-                triggerPrice = chartDict['d'][-2].low
+                triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
             if validTrade:
                 # Build list of candle combos at each timeframe
-                entry_comment = ("D: " + chartDict['d'][-2].to_string() + "-" + chartDict['d'][-1].to_string() + 
-                    " W: " + chartDict['w'][-1].to_string() + "-" + chartDict['w'][-2].to_string() + 
-                    " M: " + chartDict['m'][-1].to_string() + "-" + chartDict['m'][-2].to_string() + 
-                    " Q: " + chartDict['q'][-1].to_string() + "-" + chartDict['q'][-2].to_string() +
-                    " Y: " + chartDict['y'][-1].to_string() + "-" + chartDict['y'][-2].to_string() +"||")
+                entry_comment = ("D: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string() + 
+                    " W: " + chartDictNew['w'][-2].to_string() + "-" + chartDictNew['w'][-1].to_string() + 
+                    " M: " + chartDictNew['m'][-2].to_string() + "-" + chartDictNew['m'][-1].to_string() + 
+                    " Q: " + chartDictNew['q'][-2].to_string() + "-" + chartDictNew['q'][-1].to_string() +
+                    " Y: " + chartDictNew['y'][-2].to_string() + "-" + chartDictNew['y'][-1].to_string() +"||")
                 # Determine TFC
                 for tf in ['d', 'w', 'm', 'q', 'y']:
-                    if triggerPrice > chartDict[tf][-1].open:
+                    if triggerPrice > chartDictNew[tf][-1].open:
                         entry_comment += "G|"
                     else:
                         entry_comment += "R|"
                 return triggerPrice, direction, entry_comment
             else:
                 return None, None, None
-
+        # LTF entry on HTF signal strategy: Daily AS while W, M, or Q is in force + green TFC on D/W/M 
+        elif self.name == "LTFEntryOnHTFSignal":
+            if (    # bullish
+                # Previous daily candle is 1 or 2d (bullish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "D") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current daily candle is 2u (bullish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "U") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Check for AS in force on W, M, or Q: 1-2u, 2d-2u, 1-3, 2d-3. Use previous day high as trigger price
+                (
+                 ((chartDictNew['w'][-2].get_kind() == "2" and chartDictNew['w'][-2].get_subtype() == "D") or chartDictNew['w'][-2].get_kind() == "1" and chartDictNew['d'][-2].high > chartDictNew['w'][-2].high) or
+                 ((chartDictNew['m'][-2].get_kind() == "2" and chartDictNew['m'][-2].get_subtype() == "D") or chartDictNew['m'][-2].get_kind() == "1" and chartDictNew['d'][-2].high > chartDictNew['m'][-2].high) or
+                 ((chartDictNew['q'][-2].get_kind() == "2" and chartDictNew['q'][-2].get_subtype() == "D") or chartDictNew['q'][-2].get_kind() == "1" and chartDictNew['d'][-2].high > chartDictNew['q'][-2].high)
+                ) and
+                # Check TFC - previous D high is the trigger price, should be greater than open on the most recent D/W/M candles. 
+                # Note that checking D continuity also ensures no gap over trigger
+                (chartDictNew['d'][-1].open <= chartDictNew['d'][-2].high) and
+                (chartDictNew['w'][-1].open <= chartDictNew['d'][-2].high) and
+                (chartDictNew['m'][-1].open <= chartDictNew['d'][-2].high)
+            ):
+                validTrade = True
+                triggerPrice = chartDictNew['d'][-2].high
+                direction = util.TickerStatus.LONG
+            elif (  # bearish
+                # Previous daily candle is 1 or 2u (bearish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current daily candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "D") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Check for AS in force on W, M, or Q: 1-2d, 2u-2d, 1-3, 2u-3. Use previous day low as trigger price
+                (
+                 ((chartDictNew['w'][-2].get_kind() == "2" and chartDictNew['w'][-2].get_subtype() == "U") or chartDictNew['w'][-2].get_kind() == "1" and chartDictNew['d'][-2].low < chartDictNew['w'][-2].low) or
+                 ((chartDictNew['m'][-2].get_kind() == "2" and chartDictNew['m'][-2].get_subtype() == "U") or chartDictNew['m'][-2].get_kind() == "1" and chartDictNew['d'][-2].low < chartDictNew['m'][-2].low) or
+                 ((chartDictNew['q'][-2].get_kind() == "2" and chartDictNew['q'][-2].get_subtype() == "U") or chartDictNew['q'][-2].get_kind() == "1" and chartDictNew['d'][-2].low < chartDictNew['q'][-2].low)
+                ) and
+                # Check TFC - previous D low is the trigger price. Note that checking D continuity also ensures no gap under trigger
+                (chartDictNew['d'][-1].open >= chartDictNew['d'][-2].low) and
+                (chartDictNew['w'][-1].open >= chartDictNew['d'][-2].low) and
+                (chartDictNew['m'][-1].open >= chartDictNew['d'][-2].low)
+            ):
+                validTrade = True
+                triggerPrice = chartDictNew['d'][-2].low
+                direction = util.TickerStatus.SHORT
+            if validTrade:
+                # Build list of candle combos at each timeframe
+                entry_comment = ("D: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string() + 
+                    " W: " + chartDictNew['w'][-2].to_string() + "-" + chartDictNew['w'][-1].to_string() + 
+                    " M: " + chartDictNew['m'][-2].to_string() + "-" + chartDictNew['m'][-1].to_string() + 
+                    " Q: " + chartDictNew['q'][-2].to_string() + "-" + chartDictNew['q'][-1].to_string() +
+                    " Y: " + chartDictNew['y'][-2].to_string() + "-" + chartDictNew['y'][-1].to_string() +"||")
+                # Determine TFC
+                for tf in ['d', 'w', 'm', 'q', 'y']:
+                    if triggerPrice > chartDictNew[tf][-1].open:
+                        entry_comment += "G|"
+                    else:
+                        entry_comment += "R|"
+                return triggerPrice, direction, entry_comment
+            else:
+                return None, None, None
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
             
             
-    def getStop(self, chartDict, trade, er_list):
-        isLastDayBeforeER = pd.to_datetime(chartDict['d'][-1].open_ts, unit='s', utc=True).date() in er_list
+    def getStop(self, chartDictNew, chartDictOld, trade):
         exitComment = ""
-        if isLastDayBeforeER:
-            exitComment = f"Last day before ER - {pd.to_datetime(chartDict['d'][-1].open_ts, unit='s', utc=True).date()}| "
         if self.name == "SimpleDailyAS":
             # SimpleDailyAS strategy: 
             # If trade is open at the same day stop is 50% of trigger (previous) candle 
             # If trade is open in the previous day - stop is breakeven
             # If trade is open before previous day - stop is at low (long) or high (short) of previous candle
             if trade['daysOpen'] == 0:
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].close), exitComment
-                    else:
-                        return min(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].close), exitComment
-                else:
-                    return 0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), exitComment
+                    return 0.5*(chartDictNew['d'][-2].high+chartDictNew['d'][-2].low), exitComment
             elif trade['daysOpen'] == 1:
-                exitComment = exitComment + " Exit pattern: " + chartDict['d'][-2].to_string() + "-" + chartDict['d'][-1].to_string()
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(trade['entryPrice'], chartDict['d'][-1].close), exitComment
-                    else:
-                        return min(trade['entryPrice'], chartDict['d'][-1].close), exitComment
-                else:
-                    return trade['entryPrice'], exitComment
+                exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+                return trade['entryPrice'], exitComment
             else:
-                exitComment = exitComment + " Exit pattern: " + chartDict['d'][-2].to_string() + "-" + chartDict['d'][-1].to_string()
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(chartDict['d'][-2].low, chartDict['d'][-1].close), exitComment
-                    else:
-                        return min(chartDict['d'][-2].high, chartDict['d'][-1].close), exitComment
+                exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+                if trade['direction'] == util.TickerStatus.LONG:
+                    return chartDictNew['d'][-2].low, exitComment
                 else:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return chartDict['d'][-2].low, exitComment
-                    else:
-                        return chartDict['d'][-2].high, exitComment
+                    return chartDictNew['d'][-2].high, exitComment
         elif self.name == "SimpleAS_DailyTFCStop":
             # Same as SimpleDailyAS strategy but with extra stop at Day 0 if Daily TFC flips
             # If trade is open at the same day stop is 50% of trigger (previous) candle 
             # If trade is open in the previous day - stop is breakeven
             # If trade is open before previous day - stop is at low (long) or high (short) of previous candle
             if trade['daysOpen'] == 0:
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open, chartDict['d'][-1].close), exitComment
-                    else:
-                        return min(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open, chartDict['d'][-1].close), exitComment
+                if trade['direction'] == util.TickerStatus.LONG:
+                    return max(0.5*(chartDictNew['d'][-2].high+chartDictNew['d'][-2].low), chartDictNew['d'][-1].open), exitComment
                 else:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open), exitComment
-                    else:
-                        return min(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open), exitComment
+                    return min(0.5*(chartDictNew['d'][-2].high+chartDictNew['d'][-2].low), chartDictNew['d'][-1].open), exitComment
             elif trade['daysOpen'] == 1:
-                exitComment = exitComment + " Exit pattern: " + chartDict['d'][-2].to_string() + "-" + chartDict['d'][-1].to_string()
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(trade['entryPrice'], chartDict['d'][-1].close), exitComment
-                    else:
-                        return min(trade['entryPrice'], chartDict['d'][-1].close), exitComment
-                else:
-                    return trade['entryPrice'], exitComment
+                exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+                return trade['entryPrice'], exitComment
             else:
-                exitComment = exitComment + " Exit pattern: " + chartDict['d'][-2].to_string() + "-" + chartDict['d'][-1].to_string()
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(chartDict['d'][-2].low, chartDict['d'][-1].close), exitComment
-                    else:
-                        return min(chartDict['d'][-2].high, chartDict['d'][-1].close), exitComment
+                exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+                if trade['direction'] == util.TickerStatus.LONG:
+                    return chartDictNew['d'][-2].low, exitComment
                 else:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return chartDict['d'][-2].low, exitComment
-                    else:
-                        return chartDict['d'][-2].high, exitComment
+                    return chartDictNew['d'][-2].high, exitComment
         elif self.name == "SimpleAS_DailyTFCOrPCTStop":
             # Same as SimpleDailyAS strategy but with extra stop at Day 0 if Daily TFC flips or if stop loss exceeds 1%
             # If trade is open at the same day stop is 50% of trigger (previous) candle 
             # If trade is open in the previous day - stop is breakeven
             # If trade is open before previous day - stop is at low (long) or high (short) of previous candle
             if trade['daysOpen'] == 0:
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open, chartDict['d'][-1].close, 0.99*trade['entryPrice']), exitComment
-                    else:
-                        return min(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open, chartDict['d'][-1].close, 1.01*trade['entryPrice']), exitComment
+                if trade['direction'] == util.TickerStatus.LONG:
+                    return max(0.5*(chartDictNew['d'][-2].high+chartDictNew['d'][-2].low), chartDictNew['d'][-1].open, 0.99*trade['entryPrice']), exitComment
                 else:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open, 0.99*trade['entryPrice']), exitComment
-                    else:
-                        return min(0.5*(chartDict['d'][-2].high+chartDict['d'][-2].low), chartDict['d'][-1].open, 1.01*trade['entryPrice']), exitComment
+                    return min(0.5*(chartDictNew['d'][-2].high+chartDictNew['d'][-2].low), chartDictNew['d'][-1].open, 1.01*trade['entryPrice']), exitComment
             elif trade['daysOpen'] == 1:
-                exitComment = exitComment + " Exit pattern: " + chartDict['d'][-2].to_string() + "-" + chartDict['d'][-1].to_string()
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(trade['entryPrice'], chartDict['d'][-1].close), exitComment
-                    else:
-                        return min(trade['entryPrice'], chartDict['d'][-1].close), exitComment
-                else:
-                    return trade['entryPrice'], exitComment
+                exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+                return trade['entryPrice'], exitComment
             else:
-                exitComment = exitComment + " Exit pattern: " + chartDict['d'][-2].to_string() + "-" + chartDict['d'][-1].to_string()
-                if isLastDayBeforeER:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return max(chartDict['d'][-2].low, chartDict['d'][-1].close), exitComment
-                    else:
-                        return min(chartDict['d'][-2].high, chartDict['d'][-1].close), exitComment
+                exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+                if trade['direction'] == util.TickerStatus.LONG:
+                    return chartDictNew['d'][-2].low, exitComment
                 else:
-                    if trade['direction'] == util.TickerStatus.LONG:
-                        return chartDict['d'][-2].low, exitComment
-                    else:
-                        return chartDict['d'][-2].high, exitComment
+                    return chartDictNew['d'][-2].high, exitComment
+        # LTF entry on HTF signal strategy: stop at Daily AS against 
+        elif self.name == "LTFEntryOnHTFSignal":
+            exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+            if trade['direction'] == util.TickerStatus.LONG:
+                return chartDictNew['d'][-2].low, exitComment
+            else:
+                return chartDictNew['d'][-2].high, exitComment
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
+    # In general this can be modified for each strategy, but for now it is the same for all. If trade is active - close at end of day
+    def handleER(self, trade, chartDict):
+        exitComment = f"ER day - {pd.to_datetime(chartDict['d'][-1].open_ts, unit='s', utc=True).date()}| "
+        if trade['exitPrice'] == -1:    # Trade is still open
+            exitComment += "Close at end of day| "
+            # If trade is active - close at end of day
+            trade['exitPrice'] = chartDict['d'][-1].close
+            trade['exitTimestamp_sec'] = chartDict['d'][-1].open_ts
+            trade['exit_comment'] = exitComment
+

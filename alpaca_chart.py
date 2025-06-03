@@ -411,3 +411,4 @@ if __name__ == "__main__":
    
     # see: https://forum.alpaca.markets/t/how-to-get-bars-within-30-mins-time-frame/11613
     
+    # DASH open price on March 19 2025 - TV shows 185.23 (intraday), 186 (Daily). 186.27 reported - matches TOS intraday chart

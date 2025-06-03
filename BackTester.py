@@ -1,5 +1,4 @@
-from datetime import datetime, timedelta
-#import session
+from datetime import datetime
 from alpaca_chart import DataRetrieval
 import util
 import pandas as pd
@@ -10,29 +9,47 @@ from BackTestStrategy import BackTestStrategy as bts
 import multiprocessing as mp
 from functools import partial
 from earnings_calendar import EarningsCalendar
+import time
 
 # TODO: This may or may be needed. Commenting out for now
 #def isAS(candle1, candle2, direction):
 #    return (direction == util.TickerStatus.LONG and candle1['high'] > candle2['high']) or \
 #    (direction == util.TickerStatus.SHORT and candle1['low'] < candle2['low'])
 
-# Function to enter a trade based on the strategy. Returns a dictionary with trade details. If no trade is entered - returns an empty dictionary
-def enterTrade(sym, chartDict, session, strategy, er_list):
+# Function to enter a trade based on the trigger defined by strategy. 
+# Params:
+#   sym - symbol to enter trade for
+#   chartDictNew - dictionary with new chart data (including this day candle which may trigger a trade)
+#   chartDictOld - dictionary with old chart data (up to and including previous day candle)
+#   session - session object to retrieve data (if trade is triggered - pull 1min data to idenfiy entry time)
+#   strategy - strategy object to use for entering trades
+# Returns: dictionary with trade details with the keys:
+#   'symbol' - ticker symbol
+#   'entryPrice' - price at which trade is entered
+#   'entryTimestamp_sec' - timestamp of entry in seconds (seconds since epoch), 
+#   'entry_comment' - comment on the entry (e.g. which pattern is formed at all timeframes) #TODO: consider splitting into multiple keys for each timeframe
+#   'direction' - direction of the trade (util.TickerStatus.LONG or util.TickerStatus.SHORT)
+#   'exitPrice' - price at which trade is exited (if not exited - -1). This is populated if trade is stopped out the same day
+#   'exitTimestamp_sec' - timestamp of exit in seconds (seconds since epoch), -1 if not stopped out
+#   'daysOpen' - number of days trade is open (0 if not entered)
+#   'stop_type' - type of stop (e.g. "stop hit", "stop gapped", "stop same day")
+# If no trade is entered - returns None
+def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
     tradeToReturn = []
     exitPrice = -1
     exitTimestamp = -1
     daysOpen = 0
 
-    triggerPrice, direction, entry_comment = strategy.getNewTrade(chartDict, er_list)
+    triggerPrice, direction, entry_comment = strategy.getNewTrade(chartDictNew, chartDictOld)
     if direction is None:
-        return tradeToReturn
-    elif direction == util.TickerStatus.LONG:
+        return None
+    elif direction == util.TickerStatus.LONG:   #TODO: get rid of entryLbl by printing .name of direction
         entryLbl = "LONG"
     else:
         entryLbl = "SHORT"
     
     # Find the exact time of entry
-    tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
+    tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDictNew['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
     intradayCandles = session.getChart([sym], 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
     intradayCandles = intradayCandles[sym]
     if direction == util.TickerStatus.LONG:
@@ -41,16 +58,17 @@ def enterTrade(sym, chartDict, session, strategy, er_list):
         entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.low < triggerPrice), None)
     if entryID is None:
         print(f'{sym}: No entry found intraday but expected a {entryLbl} entry based on daily chart on {tradeDay[0]}, trigger = {triggerPrice}')
-        return tradeToReturn
+        return None
     else:   # record time of entry
         entryTimestamp = intradayCandles[entryID].open_ts
 
-    tradeToReturn = {'symbol': sym, 'entryPrice': triggerPrice, 'entryTimestamp_sec': entryTimestamp, 
-                'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp, 
-                'daysOpen': daysOpen, 'direction': direction, 
-                'entry_comment': entry_comment}
+    tradeToReturn = {'symbol': sym, 
+                     'entryPrice': triggerPrice, 'entryTimestamp_sec': entryTimestamp, 'entry_comment': entry_comment,
+                     'daysOpen': daysOpen, 'direction': direction,
+                     'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp, 
+                    }
     # Get stop on the day of entry
-    stopPrice, exit_comment = strategy.getStop(chartDict, tradeToReturn, er_list)
+    stopPrice, exit_comment = strategy.getStop(chartDictNew, chartDictOld, tradeToReturn)
     tradeToReturn['stop'] = stopPrice
     tradeToReturn['exit_comment'] = exit_comment
     # Check if stop out the same day (for efficiency, so we don't pull the same 1min data from API again)
@@ -65,15 +83,24 @@ def enterTrade(sym, chartDict, session, strategy, er_list):
 
     return tradeToReturn
 
-# Check if stop is hit. If stop hit - set exit price and timestamp; otherwise - update stop 
-def updateTrade(trade, chartDict, session, strategy, er_list):
+# Update stop given the most recent chart. Check if stop is hit. If stop hit - set exit price and timestamp.
+# This sequence (compute stop, and then check if it is hit) gives more flexibility than just using chart up to previous day, e.g. if we want to use current day open as a stop
+# Params:
+#   trade - dictionary with trade details
+#   chartDictNew - dictionary with new chart data (including this day candle which may trigger a stop)
+#   chartDictOld - dictionary with old chart data (up to and including previous day candle)
+#   session - session object to retrieve data (if stop is hit - pull 1min data to idenfiy exit time)
+#   strategy - strategy object to use for determining the stop
+# Returns: None, updates trade dictionary in place
+def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
     trade['daysOpen'] = trade['daysOpen'] + 1
-    stopVal, exit_comment = strategy.getStop(chartDict, trade, er_list)
+    stopVal, exit_comment = strategy.getStop(chartDictNew, chartDictOld, trade)
     trade['stop'] = stopVal
-    # Find time when stop hit, also check if we gapped stop
-    if  ((trade['direction'] == util.TickerStatus.LONG and chartDict['d'][-1].low <= trade['stop']) or
-        (trade['direction'] == util.TickerStatus.SHORT and chartDict['d'][-1].high >= trade['stop'])):
-        tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDict['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
+    trade['exit_comment'] = exit_comment
+    # If stop hit - find time when stop hit, also check if we gapped stop
+    if  ((trade['direction'] == util.TickerStatus.LONG and chartDictNew['d'][-1].low <= trade['stop']) or
+        (trade['direction'] == util.TickerStatus.SHORT and chartDictNew['d'][-1].high >= trade['stop'])):
+        tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDictNew['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
         intradayCandles = session.getChart([trade['symbol']], 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
         intradayCandles = intradayCandles[trade['symbol']]
         # Find intraday candle when stop is hit
@@ -87,12 +114,11 @@ def updateTrade(trade, chartDict, session, strategy, er_list):
                 entryID = -1
             else:
                 entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high >= trade['stop']), None)
-        # Record exit price and time
-        trade['exit_comment'] = exit_comment
+        # Record exit price and time 
         if entryID is None:
             print(f'{trade['symbol']}: No {trade['direction']} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}')
             trade['exitPrice'] = trade['stop']
-            trade['stop type'] = "stop hit"
+            trade['stop type'] = "stop near-hit"
         elif entryID == -1: # stop gapped
             trade['exitPrice'] = intradayCandles[0].open
             trade['exitTimestamp_sec'] = intradayCandles[0].open_ts
@@ -101,7 +127,7 @@ def updateTrade(trade, chartDict, session, strategy, er_list):
             trade['exitPrice'] = trade['stop']
             trade['exitTimestamp_sec'] = intradayCandles[entryID].open_ts
             trade['stop type'] = "stop hit"
-
+  
 def printTrade(trade):
     entryTime = datetime.fromtimestamp(trade['entryTimestamp_sec'])
     gain_pct = 0
@@ -214,7 +240,7 @@ def backtest_symbol(dailyChart, chartDict, symbol, er_list, session, strategy):
         # Update charts
         dayCandleToAdd = dailyChart[day_id]
         dayDateToAdd = pd.to_datetime(dayCandleToAdd.open_ts, unit='s')
-        chartDict = addDailyCandleToChart(chartDict, lastDay, dayCandleToAdd, dayDateToAdd)
+        chartDictNew = addDailyCandleToChart(chartDict, lastDay, dayCandleToAdd, dayDateToAdd)
         lastDay = dayDateToAdd
         #with open('chart.txt', 'a') as f:
         #    f.write(f"==========={symbol}=============\n")
@@ -223,14 +249,21 @@ def backtest_symbol(dailyChart, chartDict, symbol, er_list, session, strategy):
         # Update trades
         for trade in trades:
             if trade['exitPrice'] == - 1:
-                updateTrade(trade, chartDict, session, strategy, er_list)
+                updateTrade(trade, chartDictNew, chartDict, session, strategy)
 
         # Check for new trades
         # Strategy is implemented in enterTrade function
-        newTrade = enterTrade(symbol, chartDict, session, strategy, er_list)
+        newTrade = enterTrade(symbol, chartDictNew, chartDict, session, strategy)
         if bool(newTrade):
             trades.append(newTrade)
-
+        
+        # Check for potential ER
+        if pd.to_datetime(chartDictNew['d'][-1].open_ts, unit='s', utc=True).date() in er_list:
+            for trade in trades:
+                if trade['exitPrice'] == - 1:
+                    strategy.handleER(trade, chartDictNew)
+        
+        chartDict = copy.deepcopy(chartDictNew)  # Update chartDict to the new one with the latest daily candle
     # Log resulting trades
     #for trade in trades:
     #    printTrade(trade)
@@ -255,8 +288,9 @@ if __name__ == "__main__":
     watchlist = pd.read_csv('Watchlists/' + watchlist_name + '.csv', header = None)
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
     watchlist = watchlist[0].to_list()
-    strategy_name = "SimpleAS_DailyTFCOrPCTStop"
-    tradeLogFileName = "./Trades/trades_" + startDay_str.split(' ')[0].replace('-', '') + "_" + endDay_str.split(' ')[0].replace('-', '') + "_" + watchlist_name + "_" + strategy_name + ".csv"
+    strategy_name = "SimpleDailyAS"
+    test_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+    tradeLogFileName = "./Trades/trades_" + startDay_str.split(' ')[0].replace('-', '') + "_" + endDay_str.split(' ')[0].replace('-', '') + "_" + watchlist_name + "_" + strategy_name + "_" + test_timestamp + ".csv"
     os.makedirs('./Trades/', exist_ok=True)
     #TDSession = session.initTDSession()
     trades = []
@@ -302,8 +336,11 @@ if __name__ == "__main__":
     chartDict_candles = [chartDict[symbol] for symbol in symbol_valid]
     er_per_symbol = [er.get_ER_by_ticker(symbol) for symbol in symbol_valid]
     # Start backtesting for each symbol in parallel
+    start_time = time.perf_counter()
     with mp.Pool() as pool:
         total_result = pool.starmap(partial(backtest_symbol, session=session, strategy=strategy), zip(dailyChart_candles, chartDict_candles, symbol_valid, er_per_symbol))
+    end_time = time.perf_counter()
+    print(f"Backtesting completed in {end_time - start_time:.2f} seconds")
     all_trades = {}
     gain_summary = {}
     for sublist in total_result:
