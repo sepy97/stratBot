@@ -90,12 +90,21 @@ class Candle:
         else:
             return ""
         
+    def get_pattern(self):
+        # Return H for hammer, S for shooter, or X for neither. Hammer and shooter are defined as open and close being below or above 30% of the candle range.
+        if self.open > 0.7*self.high + 0.3*self.low and self.close > 0.7*self.high + 0.3*self.low:
+            return "H"
+        elif self.open < 0.3*self.high + 0.7*self.low and self.close < 0.3*self.high + 0.7*self.low:
+            return "S"
+        else:
+            return "X"
+
     def to_string(self):
         # Return candle as string
         #if (self.get_subtype()==None):
         #    print ("Error: subtype is None!")
         #    return self.get_kind()
-        return self.get_kind() + self.get_subtype() + self.get_direction()
+        return self.get_kind() + self.get_subtype() + self.get_direction() + self.get_pattern()
     
     def to_string_full(self):
         dt = pd.to_datetime(round(self.timestamp_ms/1000), unit='s', utc=True).tz_convert('America/New_York').floor('s')

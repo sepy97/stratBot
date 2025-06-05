@@ -41,22 +41,6 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
-            if validTrade:
-                # Build list of candle combos at each timeframe
-                entry_comment = ("D: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string() + 
-                    " W: " + chartDictNew['w'][-2].to_string() + "-" + chartDictNew['w'][-1].to_string() + 
-                    " M: " + chartDictNew['m'][-2].to_string() + "-" + chartDictNew['m'][-1].to_string() + 
-                    " Q: " + chartDictNew['q'][-2].to_string() + "-" + chartDictNew['q'][-1].to_string() +
-                    " Y: " + chartDictNew['y'][-2].to_string() + "-" + chartDictNew['y'][-1].to_string() +"||")
-                # Determine TFC
-                for tf in ['d', 'w', 'm', 'q', 'y']:
-                    if triggerPrice > chartDictNew[tf][-1].open:
-                        entry_comment += "G|"
-                    else:
-                        entry_comment += "R|"
-                return triggerPrice, direction, entry_comment
-            else:
-                return None, None, None
         # LTF entry on HTF signal strategy: Daily AS while W, M, or Q is in force + green TFC on D/W/M 
         elif self.name == "LTFEntryOnHTFSignal":
             if (    # bullish
@@ -98,26 +82,53 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
-            if validTrade:
-                # Build list of candle combos at each timeframe
-                entry_comment = ("D: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string() + 
-                    " W: " + chartDictNew['w'][-2].to_string() + "-" + chartDictNew['w'][-1].to_string() + 
-                    " M: " + chartDictNew['m'][-2].to_string() + "-" + chartDictNew['m'][-1].to_string() + 
-                    " Q: " + chartDictNew['q'][-2].to_string() + "-" + chartDictNew['q'][-1].to_string() +
-                    " Y: " + chartDictNew['y'][-2].to_string() + "-" + chartDictNew['y'][-1].to_string() +"||")
-                # Determine TFC
-                for tf in ['d', 'w', 'm', 'q', 'y']:
-                    if triggerPrice > chartDictNew[tf][-1].open:
-                        entry_comment += "G|"
-                    else:
-                        entry_comment += "R|"
-                return triggerPrice, direction, entry_comment
-            else:
-                return None, None, None
+        # HammerShooterInsideDayAS strategy: AS on D hammer/shooter or inside day (1-2u, 1-3, 2d hammer - 2u, 2d hammer - 3) + no TFC check
+        elif self.name == "HammerShooterInsideDayAS":
+            if (    # bullish
+                # Previous daily candle is 1 or 2d hammer (bullish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "D" and chartDictNew['d'][-2].get_pattern == "H") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current daily candle is 2u (bullish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "U") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Ensure no gap over trigger
+                (chartDictNew['d'][-1].open <= chartDictNew['d'][-2].high) 
+            ):
+                validTrade = True
+                triggerPrice = chartDictNew['d'][-2].high
+                direction = util.TickerStatus.LONG
+            elif (  # bearish
+                # Previous daily candle is 1 or 2u shooter (bearish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U" and chartDictNew['d'][-2].get_pattern == "S") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current daily candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "D") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Ensure no gap under trigger
+                (chartDictNew['d'][-1].open >= chartDictNew['d'][-2].low)
+            ):
+                validTrade = True
+                triggerPrice = chartDictNew['d'][-2].low
+                direction = util.TickerStatus.SHORT
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
+        
+        if validTrade:
+            # Build list of candle combos at each timeframe
+            entry_comment = ("D: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string() + 
+                " W: " + chartDictNew['w'][-2].to_string() + "-" + chartDictNew['w'][-1].to_string() + 
+                " M: " + chartDictNew['m'][-2].to_string() + "-" + chartDictNew['m'][-1].to_string() + 
+                " Q: " + chartDictNew['q'][-2].to_string() + "-" + chartDictNew['q'][-1].to_string() +
+                " Y: " + chartDictNew['y'][-2].to_string() + "-" + chartDictNew['y'][-1].to_string() +"||")
+            # Determine TFC
+            for tf in ['d', 'w', 'm', 'q', 'y']:
+                if triggerPrice > chartDictNew[tf][-1].open:
+                    entry_comment += "G|"
+                else:
+                    entry_comment += "R|"
+            return triggerPrice, direction, entry_comment
+        else:
+            return None, None, None
+
             
-            
+    #   chartDictNew - dictionary with new chart data (including this day candle which may trigger a stop)
+    #   chartDictOld - dictionary with old chart data (up to and including previous day candle)
     def getStop(self, chartDictNew, chartDictOld, trade):
         exitComment = ""
         if self.name == "SimpleDailyAS":
@@ -177,6 +188,12 @@ class BackTestStrategy:
         # LTF entry on HTF signal strategy: stop at Daily AS against 
         elif self.name == "LTFEntryOnHTFSignal":
             exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+            if trade['direction'] == util.TickerStatus.LONG:
+                return chartDictNew['d'][-2].low, exitComment
+            else:
+                return chartDictNew['d'][-2].high, exitComment
+        # HammerShooterInsideDayAS strategy: stop at previous candle low (long) or high (short)
+        elif self.name == "HammerShooterInsideDayAS":
             if trade['direction'] == util.TickerStatus.LONG:
                 return chartDictNew['d'][-2].low, exitComment
             else:

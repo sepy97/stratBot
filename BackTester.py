@@ -288,7 +288,7 @@ if __name__ == "__main__":
     watchlist = pd.read_csv('Watchlists/' + watchlist_name + '.csv', header = None)
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
     watchlist = watchlist[0].to_list()
-    strategy_name = "SimpleDailyAS"
+    strategy_name = "HammerShooterInsideDayAS"
     test_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
     tradeLogFileName = "./Trades/trades_" + startDay_str.split(' ')[0].replace('-', '') + "_" + endDay_str.split(' ')[0].replace('-', '') + "_" + watchlist_name + "_" + strategy_name + "_" + test_timestamp + ".csv"
     os.makedirs('./Trades/', exist_ok=True)
@@ -368,8 +368,9 @@ if __name__ == "__main__":
     print(f'Time span: {startDay} to {endDay}')
     print('Strategy: ' + strategy_name)
     print('Total gain = {:.2f}%'.format(gain_summary['gain %'].sum()))
-    print('Symbols: ' + str(watchlist))
-    print(gain_summary)
+    print('Watchlist: ' + watchlist_name)
+    #print('Symbols: ' + str(watchlist))
+    #print(gain_summary)
     print()
     printTradeDict(all_trades, tradeLogFileName)
     print(f'Trade details logged in {tradeLogFileName}')
