@@ -180,7 +180,30 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
- 
+        # BasicDailyAS strategy: simply AS on D: 1-2u, 1-3, 2d-2u, 2d-3 (this is mainly used for data collection)
+        elif self.name == "BasicDailyAS":
+            if (    # bullish
+                # Previous candle is 1 or 2d (bullish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "D") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current candle is 2u (bullish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "U") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Ensure no gap over trigger
+                (chartDictNew['d'][-1].open <= chartDictNew['d'][-2].high)
+            ):
+                validTrade = True
+                triggerPrice = chartDictNew['d'][-2].high
+                direction = util.TickerStatus.LONG
+            elif (  # bearish
+                # Previous candle is 1 or 2u (bearish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "D") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Ensure no gap under trigger
+                (chartDictNew['d'][-1].open >= chartDictNew['d'][-2].low)
+            ):
+                validTrade = True
+                triggerPrice = chartDictNew['d'][-2].low
+                direction = util.TickerStatus.SHORT
 
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
@@ -265,15 +288,14 @@ class BackTestStrategy:
                     return chartDictNew['d'][-2].low, exitComment
                 else:
                     return chartDictNew['d'][-2].high, exitComment
-        # LTF entry on HTF signal strategy: stop at Daily AS against 
-        elif self.name == "LTFEntryOnHTFSignal" or self.name == "LTFEntryOnHTFSignal_V2":
+        # Strategies: LTF entry on HTF signal strategy; HammerShooterInsideDayAS; BasicDailyAS. Stop at Daily AS against 
+        elif (self.name == "LTFEntryOnHTFSignal" or 
+              self.name == "LTFEntryOnHTFSignal_V2" or
+              self.name == "HammerShooterInsideDayAS" or
+              self.name == "HammerShooterInsideDayAS_WithGaps" or
+              self.name == "BasicDailyAS"
+            ):
             exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
-            if trade['direction'] == util.TickerStatus.LONG:
-                return chartDictNew['d'][-2].low, exitComment
-            else:
-                return chartDictNew['d'][-2].high, exitComment
-        # HammerShooterInsideDayAS strategy: stop at previous candle low (long) or high (short)
-        elif self.name == "HammerShooterInsideDayAS" or self.name == "HammerShooterInsideDayAS_WithGaps":
             if trade['direction'] == util.TickerStatus.LONG:
                 return chartDictNew['d'][-2].low, exitComment
             else:
