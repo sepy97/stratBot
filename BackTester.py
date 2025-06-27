@@ -17,14 +17,16 @@ import candles
 #    return (direction == util.TickerStatus.LONG and candle1['high'] > candle2['high']) or \
 #    (direction == util.TickerStatus.SHORT and candle1['low'] < candle2['low'])
 
-# Function to enter a trade based on the trigger defined by strategy. 
+# Function to enter a trade based on the trigger defined by strategy. To minimize the number of API calls, the analysis is done in two steps:
+#   1. Screen for possible trade based on Daily+HTF charts (implemented by strategy)
+#   2. If potential trade - pull intraday chart data to confirm trade and if confirmed - populate trade details. Trade confirmation and details are implemented by strategy.
 # Params:
 #   sym - symbol to enter trade for
 #   chartDictNew - dictionary with new chart data (including this day candle which may trigger a trade)
 #   chartDictOld - dictionary with old chart data (up to and including previous day candle)
 #   session - session object to retrieve data (if trade is triggered - pull 1min data to idenfiy entry time)
 #   strategy - strategy object to use for entering trades
-# Returns: dictionary with trade details with the keys:
+# Returns: list of dictionaries with trade details with the keys:
 #   'symbol' - ticker symbol
 #   'entryPrice' - price at which trade is entered
 #   'entryTimestamp_sec' - timestamp of entry in seconds (seconds since epoch), 
@@ -34,94 +36,103 @@ import candles
 #   'exitTimestamp_sec' - timestamp of exit in seconds (seconds since epoch), -1 if not stopped out
 #   'daysOpen' - number of days trade is open (0 if not entered)
 #   'stop_type' - type of stop (e.g. "stop hit", "stop gapped", "stop same day")
-# If no trade is entered - returns None
+# If no trade is entered - returns empty list
 def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
     tradeToReturn = []
     exitPrice = -1
     exitTimestamp = -1
     daysOpen = 0
-
-    triggerPrice, direction = strategy.getNewTrade(chartDictNew, chartDictOld)
-    if direction is None:
-        return None
-    elif direction == util.TickerStatus.LONG:   #TODO: get rid of entryLbl by printing .name of direction
-        entryLbl = "LONG"
-    else:
-        entryLbl = "SHORT"
+    # Screen daily+HTF charts for entry. This returns a list of tuples, each tuple is (triggerPrice, direction) - maybe 1 or 2 entries (if both long and short entries are possible)
+    # This is done to minimize the number of API calls, so we don't pull intraday chart unless we have a potential trade
+    # If no potential trade - return empty list
+    potentialTrade = strategy.screenTrade(chartDictNew, chartDictOld)
+    if potentialTrade is False:
+        return tradeToReturn
+    #elif direction == util.TickerStatus.LONG:   #TODO: get rid of entryLbl by printing .name of direction
+    #    entryLbl = "LONG"
+    #else:
+    #    entryLbl = "SHORT"
     
-    # Find the exact time of entry
+    # Get intraday chart and find the exact time of entry. Note: there could be several trades in different directions on the same day, so we need to return a list of trades
     tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDictNew['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
     intradayCandles = session.getChart([sym], 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
     intradayCandles = intradayCandles[sym]
-    if direction == util.TickerStatus.LONG:
-        entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high > triggerPrice), None)
-    else:
-        entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.low < triggerPrice), None)
-    if entryID is None:
-        print(f'{sym}: No entry found intraday but expected a {entryLbl} entry based on daily chart on {tradeDay[0]}, trigger = {triggerPrice}')
-        return None
-    # Record time of entry and determine candle combos at trigger
-    entryTimestamp = intradayCandles[entryID].open_ts
-    tradeToReturn = {'symbol': sym, 
-                    'entryPrice': triggerPrice, 'entryTimestamp_sec': entryTimestamp,
-                    'daysOpen': daysOpen, 'direction': direction,
-                    'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp, 
-                    }
-    # Record combos and TFC during entry 
-    # Setup entryPrice to be just above/below trigger price to avoid always reporting inside day
-    if direction == util.TickerStatus.LONG:
-        entryPrice = triggerPrice + 0.01
-    else:
-        entryPrice = triggerPrice - 0.01
-    currentDayLow = min(candle.low for candle in intradayCandles[:entryID+1])
-    currentDayHigh = max(candle.high for candle in intradayCandles[:entryID+1])
-    currentCandleDict = dict.fromkeys(chartDictNew.keys())
-    for tf in chartDictOld.keys():    
-        # Check if this day falls into the new HTF candle (ie we don't have decoupling yet)
-        if chartDictOld[tf][-1].open_ts < chartDictNew[tf][-1].open_ts:
-            currentCandleDict[tf] = candles.Candle(
-                timestamp_ms=chartDictNew[tf][-1].open_ts*1000,
-                open=chartDictNew[tf][-1].open,
-                high=currentDayHigh,
-                low=currentDayLow,
-                close=entryPrice,
-                prev_high=chartDictOld[tf][-1].high,
-                prev_low=chartDictOld[tf][-1].low
-            )
-        else: # we have decoupling, this partial daily candle needs to be aggregated into HTF candle
-            currentCandleDict[tf] = candles.Candle(
-                timestamp_ms=chartDictNew[tf][-1].open_ts*1000,
-                open=chartDictNew[tf][-1].open,
-                high=max(currentDayHigh, chartDictOld[tf][-1].high),
-                low=min(currentDayLow, chartDictOld[tf][-1].low),
-                close=entryPrice,
-                prev_high=chartDictOld[tf][-1].previous_high,
-                prev_low=chartDictOld[tf][-1].previous_low
-            )
-        # Record candle combo 
-        tradeToReturn[tf] = chartDictNew[tf][-2].to_string() + "-" + currentCandleDict[tf].to_string()   
-        tradeToReturn[tf + " combo"] = chartDictNew[tf][-2].get_kind() + "-" + currentCandleDict[tf].get_kind()
-        tradeToReturn["Prev D pattern"] = chartDictNew['d'][-2].get_pattern()
-        # Record TFC
-        if entryPrice > chartDictNew[tf][-1].open:
-            tradeToReturn["TFC " + tf] = "G"
+    firstCandleID = 0
+    tradeDetailList = strategy.getNewTrade(chartDictNew, chartDictOld, intradayCandles, firstCandleID)
+    for trade in tradeDetailList:
+        triggerPrice = trade[0]
+        direction = trade[1]
+        if direction == util.TickerStatus.LONG:
+            entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high > triggerPrice), None)
         else:
-            tradeToReturn["TFC " + tf] = "R"
-
-    # Get stop on the day of entry
-    stopPrice, exit_comment = strategy.getStop(chartDictNew, chartDictOld, tradeToReturn)
-    tradeToReturn['stop'] = stopPrice
-    tradeToReturn['exit_comment'] = exit_comment
-    # Check if stop out the same day (for efficiency, so we don't pull the same 1min data from API again)
-    if direction == util.TickerStatus.LONG:
-        exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.low <= stopPrice), None)
-    else:
-        exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.high >= stopPrice), None)
-    if not exitID is None:
-        tradeToReturn['exitPrice'] = stopPrice
-        tradeToReturn['exitTimestamp_sec'] = intradayCandles[exitID].open_ts
-        tradeToReturn['stop type'] = "stop same day"
-
+            entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.low < triggerPrice), None)
+        if entryID is None:
+            print(f'{sym}: No entry found intraday but expected a {trade['direction'].name} entry based on daily chart on {tradeDay[0]}, trigger = {triggerPrice}')
+            continue
+        entryTimestamp = intradayCandles[entryID].open_ts
+        currentTrade = ({'symbol': sym, 
+                            'entryPrice': triggerPrice, 'entryTimestamp_sec': entryTimestamp,
+                            'daysOpen': daysOpen, 'direction': direction,
+                            'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp
+                            })
+ 
+        # Record combos and TFC during entry 
+        # Setup entryPrice to be just above/below trigger price to avoid always reporting inside day
+        if direction == util.TickerStatus.LONG:
+            entryPrice = triggerPrice + 0.01
+        else:
+            entryPrice = triggerPrice - 0.01
+        currentDayLow = min(candle.low for candle in intradayCandles[:entryID+1])
+        currentDayHigh = max(candle.high for candle in intradayCandles[:entryID+1])
+        # Create a dictionary with current partial candle (just at the entry) for each timeframe
+        currentCandleDict = dict.fromkeys(chartDictNew.keys())
+        for tf in chartDictOld.keys():    
+            # Check if this day falls into the new HTF candle (ie we don't have decoupling yet)
+            if chartDictOld[tf][-1].open_ts < chartDictNew[tf][-1].open_ts:
+                currentCandleDict[tf] = candles.Candle(
+                    timestamp_ms=chartDictNew[tf][-1].open_ts*1000,
+                    open=chartDictNew[tf][-1].open,
+                    high=currentDayHigh,
+                    low=currentDayLow,
+                    close=entryPrice,
+                    prev_high=chartDictOld[tf][-1].high,
+                    prev_low=chartDictOld[tf][-1].low
+                )
+            else: # we have decoupling, this partial daily candle needs to be aggregated into HTF candle
+                currentCandleDict[tf] = candles.Candle(
+                    timestamp_ms=chartDictNew[tf][-1].open_ts*1000,
+                    open=chartDictNew[tf][-1].open,
+                    high=max(currentDayHigh, chartDictOld[tf][-1].high),
+                    low=min(currentDayLow, chartDictOld[tf][-1].low),
+                    close=entryPrice,
+                    prev_high=chartDictOld[tf][-1].previous_high,
+                    prev_low=chartDictOld[tf][-1].previous_low
+                )
+            # Record candle combo 
+            currentTrade[tf] = chartDictNew[tf][-2].to_string() + "-" + currentCandleDict[tf].to_string()   
+            currentTrade[tf + " combo"] = chartDictNew[tf][-2].get_kind() + chartDictNew[tf][-2].get_subtype() + "-" + currentCandleDict[tf].get_kind() + currentCandleDict[tf].get_subtype()
+            currentTrade["Prev D pattern"] = chartDictNew['d'][-2].get_pattern()
+            # Record TFC
+            if entryPrice > chartDictNew[tf][-1].open:
+                currentTrade["TFC " + tf] = "G"
+            else:
+                currentTrade["TFC " + tf] = "R"
+        
+        # Check for same day stop out
+        # Get stop on the day of entry
+        stopPrice, exit_comment = strategy.getStop(chartDictNew, chartDictOld, currentTrade, intradayCandles, entryID)
+        currentTrade['stop'] = stopPrice
+        currentTrade['exit_comment'] = exit_comment
+        # Check if stop out the same day (for efficiency, so we don't pull the same 1min data from API again)
+        if direction == util.TickerStatus.LONG:
+            exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.low <= stopPrice), None)
+        else:
+            exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.high >= stopPrice), None)
+        if not exitID is None:
+            currentTrade['exitPrice'] = stopPrice
+            currentTrade['exitTimestamp_sec'] = intradayCandles[exitID].open_ts
+            currentTrade['stop type'] = "stop same day"
+        tradeToReturn.append(currentTrade)
     return tradeToReturn
 
 # Update stop given the most recent chart. Check if stop is hit. If stop hit - set exit price and timestamp.
@@ -224,6 +235,7 @@ def printTradeDict(tradesDict, filename):
 # This function updates all charts based on new daily candle. Assumes new candle is the next immediate candle after last_day
 # Starting chart (chartDict) must have at least one candle for each TF
 def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
+    chartDictNew = copy.deepcopy(chartDict)
     w = dayDateToAdd.week
     m = dayDateToAdd.month
     q = (m-1)//3
@@ -232,47 +244,47 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
     last_m = lastDayDate.month
     last_q = (last_m-1)//3
     last_y = lastDayDate.year
-    chartDict['d'].append(dayCandleToAdd)
+    chartDictNew['d'].append(dayCandleToAdd)
     # Weekly flip
     if w != last_w:
-        chartDict['w'].append(copy.deepcopy(dayCandleToAdd))
-        chartDict['w'][-1].previous_high = chartDict['w'][-2].high
-        chartDict['w'][-1].previous_low = chartDict['w'][-2].low
+        chartDictNew['w'].append(copy.deepcopy(dayCandleToAdd))
+        chartDictNew['w'][-1].previous_high = chartDict['w'][-1].high
+        chartDictNew['w'][-1].previous_low = chartDict['w'][-1].low
     else:
-        chartDict['w'][-1].high = max(chartDict['w'][-1].high, dayCandleToAdd.high)
-        chartDict['w'][-1].low = min(chartDict['w'][-1].low, dayCandleToAdd.low)
-        chartDict['w'][-1].close = dayCandleToAdd.close
+        chartDictNew['w'][-1].high = max(chartDict['w'][-1].high, dayCandleToAdd.high)
+        chartDictNew['w'][-1].low = min(chartDict['w'][-1].low, dayCandleToAdd.low)
+        chartDictNew['w'][-1].close = dayCandleToAdd.close
 
     # Monthly flip
     if m != last_m:
-        chartDict['m'].append(copy.deepcopy(dayCandleToAdd))
-        chartDict['m'][-1].previous_high = chartDict['m'][-2].high
-        chartDict['m'][-1].previous_low = chartDict['m'][-2].low
+        chartDictNew['m'].append(copy.deepcopy(dayCandleToAdd))
+        chartDictNew['m'][-1].previous_high = chartDict['m'][-1].high
+        chartDictNew['m'][-1].previous_low = chartDict['m'][-1].low
     else:
-        chartDict['m'][-1].high = max(chartDict['m'][-1].high, dayCandleToAdd.high)
-        chartDict['m'][-1].low = min(chartDict['m'][-1].low, dayCandleToAdd.low)
-        chartDict['m'][-1].close = dayCandleToAdd.close
+        chartDictNew['m'][-1].high = max(chartDict['m'][-1].high, dayCandleToAdd.high)
+        chartDictNew['m'][-1].low = min(chartDict['m'][-1].low, dayCandleToAdd.low)
+        chartDictNew['m'][-1].close = dayCandleToAdd.close
 
     # Quarterly flip
     if q != last_q:
-        chartDict['q'].append(copy.deepcopy(dayCandleToAdd))
-        chartDict['q'][-1].previous_high = chartDict['q'][-2].high
-        chartDict['q'][-1].previous_low = chartDict['q'][-2].low
+        chartDictNew['q'].append(copy.deepcopy(dayCandleToAdd))
+        chartDictNew['q'][-1].previous_high = chartDict['q'][-1].high
+        chartDictNew['q'][-1].previous_low = chartDict['q'][-1].low
     else:
-        chartDict['q'][-1].high = max(chartDict['q'][-1].high, dayCandleToAdd.high)
-        chartDict['q'][-1].low = min(chartDict['q'][-1].low, dayCandleToAdd.low)
-        chartDict['q'][-1].close = dayCandleToAdd.close
+        chartDictNew['q'][-1].high = max(chartDict['q'][-1].high, dayCandleToAdd.high)
+        chartDictNew['q'][-1].low = min(chartDict['q'][-1].low, dayCandleToAdd.low)
+        chartDictNew['q'][-1].close = dayCandleToAdd.close
 
     # Yearly flip
     if y != last_y:
-        chartDict['y'].append(copy.deepcopy(dayCandleToAdd))
-        chartDict['y'][-1].previous_high = chartDict['y'][-2].high
-        chartDict['y'][-1].previous_low = chartDict['y'][-2].low
+        chartDictNew['y'].append(copy.deepcopy(dayCandleToAdd))
+        chartDictNew['y'][-1].previous_high = chartDict['y'][-1].high
+        chartDictNew['y'][-1].previous_low = chartDict['y'][-1].low
     else:
-        chartDict['y'][-1].high = max(chartDict['y'][-1].high, dayCandleToAdd.high)
-        chartDict['y'][-1].low = min(chartDict['y'][-1].low, dayCandleToAdd.low)
-        chartDict['y'][-1].close = dayCandleToAdd.close
-    return chartDict
+        chartDictNew['y'][-1].high = max(chartDict['y'][-1].high, dayCandleToAdd.high)
+        chartDictNew['y'][-1].low = min(chartDict['y'][-1].low, dayCandleToAdd.low)
+        chartDictNew['y'][-1].close = dayCandleToAdd.close
+    return chartDictNew
 
 def backtest_symbol(dailyChart, chartDict, symbol, er_list, session, strategy):
     trades = []
@@ -293,10 +305,11 @@ def backtest_symbol(dailyChart, chartDict, symbol, er_list, session, strategy):
                 updateTrade(trade, chartDictNew, chartDict, session, strategy)
 
         # Check for new trades
-        # Strategy is implemented in enterTrade function
-        newTrade = enterTrade(symbol, chartDictNew, chartDict, session, strategy)
-        if bool(newTrade):
-            trades.append(newTrade)
+        # Strategy is implemented in enterTrade function. Note: enterTrade checks for same day stop out and updates trades accordingly
+        newTradeList = enterTrade(symbol, chartDictNew, chartDict, session, strategy)
+        if bool(newTradeList):
+            #trades.append(newTrade)
+            trades.extend(newTradeList)
         
         # Check for potential ER
         if pd.to_datetime(chartDictNew['d'][-1].open_ts, unit='s', utc=True).date() in er_list:
@@ -413,7 +426,7 @@ if __name__ == "__main__":
     timezone = 'America/Los_Angeles'
     earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_2025-05-18.csv'
     watchlist_name = 'NASDAQ100_2025'
-    strategy_name = "LTFEntryOnHTFSignal_V2"
+    strategy_name = "BasicDailyAS"
     runBacktest(
         startDay_str=startDay_str, 
         endDay_str=endDay_str, 

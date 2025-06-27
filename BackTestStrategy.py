@@ -6,11 +6,14 @@ class BackTestStrategy:
         self.name = name
         self.ignoreIfGap = True
 
-    # This function returns the trigger price, stop price, and direction of the trade. If gaps are allowed - then the trigger price is the open price of the current candle
+    # This function returns a list of tuples, with each tuple consisting of the trigger price and direction of the trade
     #   chartDictNew - dictionary with new chart data (including this day candle which may trigger a trade)
     #   chartDictOld - dictionary with old chart data (up to and including previous day candle)
-    def getNewTrade(self, chartDictNew, chartDictOld):
+    #   intradayCandles - list of intraday (1min) candles for the current day
+    #   firstCandleID - the ID of the first candle to start looking for entry from (needed to support multiple entries in the same day)
+    def getNewTrade(self, chartDictNew, chartDictOld, intradayCandles = None, firstCandleID = 0):
         validTrade = False
+        tradeListToReturn = []
         # SimpleDailyAS strategy: if AS on D in force + TFC on D, W, M (taken at trigger price)
         # Actionable signals: 1-2, 2-2 reversal (so 2u-2d or 2d-2u). Gap over/under trigger should be ignored
         if self.name == "SimpleDailyAS" or self.name == "SimpleAS_DailyTFCStop" or self.name == "SimpleAS_DailyTFCOrPCTStop":
@@ -25,10 +28,10 @@ class BackTestStrategy:
                 (chartDictNew['w'][-1].open <= chartDictNew['d'][-2].high) and
                 (chartDictNew['m'][-1].open <= chartDictNew['d'][-2].high)
             ):
-                validTrade = True
                 triggerPrice = chartDictNew['d'][-2].high
                 direction = util.TickerStatus.LONG
-            elif (  # bearish
+                tradeListToReturn.append((triggerPrice, direction))
+            if (  # bearish
                 # Previous candle is 1 or 2u (bearish)
                 ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U") or chartDictNew['d'][-2].get_kind() == "1") and
                 # Current candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
@@ -38,9 +41,9 @@ class BackTestStrategy:
                 (chartDictNew['w'][-1].open >= chartDictNew['d'][-2].low) and
                 (chartDictNew['m'][-1].open >= chartDictNew['d'][-2].low)
             ):
-                validTrade = True
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
+                tradeListToReturn.append((triggerPrice, direction))
         # LTF entry on HTF signal strategy: Daily AS while W, M, or Q is in force + green TFC on D/W/M 
         elif self.name == "LTFEntryOnHTFSignal":
             if (    # bullish
@@ -63,7 +66,8 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].high
                 direction = util.TickerStatus.LONG
-            elif (  # bearish
+                tradeListToReturn.append((triggerPrice, direction))
+            if (  # bearish
                 # Previous daily candle is 1 or 2u (bearish)
                 ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U") or chartDictNew['d'][-2].get_kind() == "1") and
                 # Current daily candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
@@ -82,6 +86,7 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
+                tradeListToReturn.append((triggerPrice, direction))
         # HammerShooterInsideDayAS strategy: AS on D hammer/shooter or inside day (1-2u, 1-3, 2d hammer - 2u, 2d hammer - 3) + no TFC check
         elif self.name == "HammerShooterInsideDayAS":
             if (    # bullish
@@ -95,7 +100,8 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].high
                 direction = util.TickerStatus.LONG
-            elif (  # bearish
+                tradeListToReturn.append((triggerPrice, direction))
+            if (  # bearish
                 # Previous daily candle is 1 or 2u shooter (bearish)
                 ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U" and chartDictNew['d'][-2].get_pattern == "S") or chartDictNew['d'][-2].get_kind() == "1") and
                 # Current daily candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
@@ -106,6 +112,7 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
+                tradeListToReturn.append((triggerPrice, direction))
         elif self.name == "HammerShooterInsideDayAS_WithGaps":
             if (    # bullish
                 # Previous daily candle is 1 or 2d hammer (bullish)
@@ -119,7 +126,8 @@ class BackTestStrategy:
                 else:   # if gap over trigger
                     triggerPrice = chartDictNew['d'][-1].open
                 direction = util.TickerStatus.LONG
-            elif (  # bearish
+                tradeListToReturn.append((triggerPrice, direction))                
+            if (  # bearish
                 # Previous daily candle is 1 or 2u shooter (bearish)
                 ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U" and chartDictNew['d'][-2].get_pattern == "S") or chartDictNew['d'][-2].get_kind() == "1") and
                 # Current daily candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
@@ -131,6 +139,7 @@ class BackTestStrategy:
                 else:   # if gap under trigger
                     triggerPrice = chartDictNew['d'][-1].open
                 direction = util.TickerStatus.SHORT
+                tradeListToReturn.append((triggerPrice, direction))
          # LTFEntryOnHTFSignal_V2 strategy: Daily AS while W, M, or Q is in force + green TFC on D/W/M + no W, M, and Q AS against in force
         elif self.name == "LTFEntryOnHTFSignal_V2":
             if (    # bullish
@@ -157,7 +166,8 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].high
                 direction = util.TickerStatus.LONG
-            elif (  # bearish
+                tradeListToReturn.append((triggerPrice, direction))
+            if (  # bearish
                 # Previous daily candle is 1 or 2u (bearish)
                 ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U") or chartDictNew['d'][-2].get_kind() == "1") and
                 # Current daily candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
@@ -180,6 +190,7 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
+                tradeListToReturn.append((triggerPrice, direction))
         # BasicDailyAS strategy: simply AS on D: 1-2u, 1-3, 2d-2u, 2d-3 (this is mainly used for data collection)
         elif self.name == "BasicDailyAS":
             if (    # bullish
@@ -193,7 +204,8 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].high
                 direction = util.TickerStatus.LONG
-            elif (  # bearish
+                tradeListToReturn.append((triggerPrice, direction))
+            if (  # bearish
                 # Previous candle is 1 or 2u (bearish)
                 ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U") or chartDictNew['d'][-2].get_kind() == "1") and
                 # Current candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
@@ -204,11 +216,12 @@ class BackTestStrategy:
                 validTrade = True
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
-
+                tradeListToReturn.append((triggerPrice, direction))
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
         
-        if validTrade:
+
+
             '''
             # Build list of candle combos at each timeframe 
             entry_comment = ("D: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string() + 
@@ -223,14 +236,21 @@ class BackTestStrategy:
                 else:
                     entry_comment += "R|"
             '''
-            return triggerPrice, direction
-        else:
-            return None, None
 
-            
+        return tradeListToReturn
+
+    # This function is used to find potential trades based on daily chart before intraday candles are requested
+    #   chartDictNew - dictionary with new chart data (including this day candle which may trigger a trade)
+    #   chartDictOld - dictionary with old chart data (up to and including previous day candle)
+    def screenTrade(self, chartDictNew, chartDictOld): 
+        result = self.getNewTrade(chartDictNew, chartDictOld)
+        if len(result) > 0:
+            return True
+        else:
+            return False
     #   chartDictNew - dictionary with new chart data (including this day candle which may trigger a stop)
     #   chartDictOld - dictionary with old chart data (up to and including previous day candle)
-    def getStop(self, chartDictNew, chartDictOld, trade):
+    def getStop(self, chartDictNew, chartDictOld, trade, intradayCandles = None, entryID = 0):
         exitComment = ""
         if self.name == "SimpleDailyAS":
             # SimpleDailyAS strategy: 
