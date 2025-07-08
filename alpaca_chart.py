@@ -317,6 +317,7 @@ class DataRetrieval:
 
 
     # Get daily chart - this is used for all HTF charts. Returns Alpaca Bars object. Per Alpaca docs (https://forum.alpaca.markets/t/help-with-barset/3372/2), Bars are guaranteed to be in ascending order
+    # Note: Python wrapper for Alpaca handles large number of returned bars behind the scenes (applies pagination and such)
     # Returns bars as Panda Dataframe
     #def getDailyChart(self, stock_client, symbol, start_timestamp, end_timestamp):
     #    start_time = pd.Timestamp.fromtimestamp(start_timestamp, tz='America/New_York')

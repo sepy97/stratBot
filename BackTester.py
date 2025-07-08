@@ -67,7 +67,7 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
         else:
             entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.low < triggerPrice), None)
         if entryID is None:
-            print(f'{sym}: No entry found intraday but expected a {trade['direction'].name} entry based on daily chart on {tradeDay[0]}, trigger = {triggerPrice}')
+            print(f'{sym}: No entry found intraday but expected a {direction.name} entry based on daily chart on {tradeDay[0]}, trigger = {triggerPrice}')
             continue
         entryTimestamp = intradayCandles[entryID].open_ts
         currentTrade = ({'symbol': sym, 
@@ -168,7 +168,7 @@ def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
                 entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high >= trade['stop']), None)
         # Record exit price and time 
         if entryID is None:
-            print(f'{trade['symbol']}: No {trade['direction']} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}')
+            print(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}')
             trade['exitPrice'] = trade['stop']
             trade['stop type'] = "stop near-hit"
         elif entryID == -1: # stop gapped
