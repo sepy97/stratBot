@@ -217,6 +217,40 @@ class BackTestStrategy:
                 triggerPrice = chartDictNew['d'][-2].low
                 direction = util.TickerStatus.SHORT
                 tradeListToReturn.append((triggerPrice, direction))
+        elif self.name == "DailyTrigAndTarget":
+            if len(chartDictNew['d']) < 3:
+                return tradeListToReturn
+            # Daily AS with trigger and target. 1-2u, 1-3, 2d-2u, 2d-3 for bullish. Only pick trades with R:R > 3
+            if (    # bullish
+                # Previous candle is 1 or 2d (bullish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "D") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current candle is 2u (bullish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "U") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Ensure no gap over trigger
+                (chartDictNew['d'][-1].open <= chartDictNew['d'][-2].high)
+                # Check R:R > 3
+                #chartDictNew['d'][-3].high - chartDictNew['d'][-2].high > 3 * (chartDictNew['d'][-2].high - chartDictNew['d'][-2].low)
+            ):
+                validTrade = True
+                triggerPrice = chartDictNew['d'][-2].high
+                targetPrice = chartDictNew['d'][-3].high
+                direction = util.TickerStatus.LONG
+                tradeListToReturn.append((triggerPrice, direction, targetPrice))
+            if (  # bearish
+                # Previous candle is 1 or 2u (bearish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "U") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current candle is 2d (bearish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "D") or chartDictNew['d'][-1].get_kind() == "3") and
+                # Ensure no gap under trigger
+                (chartDictNew['d'][-1].open >= chartDictNew['d'][-2].low) 
+                # Check R:R > 3
+                #chartDictNew['d'][-2].low - chartDictNew['d'][-3].low > 3 * (chartDictNew['d'][-2].high - chartDictNew['d'][-2].low)
+            ):
+                validTrade = True
+                triggerPrice = chartDictNew['d'][-2].low
+                targetPrice = chartDictNew['d'][-3].low
+                direction = util.TickerStatus.SHORT
+                tradeListToReturn.append((triggerPrice, direction, targetPrice))
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
         
@@ -320,6 +354,15 @@ class BackTestStrategy:
                 return chartDictNew['d'][-2].low, exitComment
             else:
                 return chartDictNew['d'][-2].high, exitComment
+        elif self.name == "DailyTrigAndTarget":
+            exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+            if trade['daysOpen'] == 0:
+                if trade['direction'] == util.TickerStatus.LONG:
+                    trade['stop'] = chartDictNew['d'][-2].low
+                else:
+                    trade['stop'] = chartDictNew['d'][-2].high
+            return trade['stop'], exitComment
+
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
     # In general this can be modified for each strategy, but for now it is the same for all. If trade is active - close at end of day

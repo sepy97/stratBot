@@ -218,14 +218,15 @@ class DataRetrieval:
         #        print(f"Retrying... ({5 - request_counter}/5)")
         #bars = bars.df
         #bars.reset_index('symbol', inplace=True)
-        bars.drop(columns=['volume', 'trade_count', 'vwap'], inplace=True)
-        if not intraday:    # TODO: this is a hack due to Alpaca returning 0:00:00 UTC time for D and higher TFs. Need to find a better way
-            bars.index = pd.MultiIndex.from_arrays(
-            [bars.index.get_level_values('symbol'), 
-                bars.index.get_level_values('timestamp').map(lambda x: x.tz_convert(EST).replace(hour=9, minute=30, second=0))], 
-                names=['symbol', 'timestamp'])
-            #bars.index = bars.index.map(lambda x: x.tz_convert(EST).replace(hour=9, minute=30, second=0)) # TODO: this is a hack due to Alpaca returning 0:00:00 UTC time for D and higher TFs. Need to find a better way
-
+        if not bars.empty:  # check if complete candles exist - for tickers that went IPO recently and (especially) high TFs we may not have enough history
+            bars.drop(columns=['volume', 'trade_count', 'vwap'], inplace=True)
+            if not intraday:    # TODO: this is a hack due to Alpaca returning 0:00:00 UTC time for D and higher TFs. Need to find a better way
+                bars.index = pd.MultiIndex.from_arrays(
+                [bars.index.get_level_values('symbol'), 
+                    bars.index.get_level_values('timestamp').map(lambda x: x.tz_convert(EST).replace(hour=9, minute=30, second=0))], 
+                    names=['symbol', 'timestamp'])
+                #bars.index = bars.index.map(lambda x: x.tz_convert(EST).replace(hour=9, minute=30, second=0)) # TODO: this is a hack due to Alpaca returning 0:00:00 UTC time for D and higher TFs. Need to find a better way
+            
         # Last partial candle
         if bars_last is not None:
             # Add bars_last to bars
@@ -248,14 +249,16 @@ class DataRetrieval:
         symbol_list = bars.index.get_level_values('symbol').unique()
         for sym in symbol_list:
             bars_sym = bars.xs(sym, level='symbol')
-            if bars_sym.index[0].date() > start_time_query.date():   # TODO: this is a hack. Sometimes market calendar does not know of unexpected market closure (e.g. 2023-10-09)
+            if bars_sym.index[0].date() > start_time_query.date():   # This mean we don't have enough history, do not discard the first candle
                 print(f"Warning: no candle opening at {start_time_query} returned for {sym}")
                 previousCandleHigh = None
                 previousCandleLow = None
+                firstCandleToReport = 0
             else:
                 previousCandleHigh = bars_sym.iloc[0].high
                 previousCandleLow = bars_sym.iloc[0].low
-            candles[sym] = self.convertBarsToCandleList(bars_sym[1:], previousCandleHigh, previousCandleLow)
+                firstCandleToReport = 1
+            candles[sym] = self.convertBarsToCandleList(bars_sym[firstCandleToReport:], previousCandleHigh, previousCandleLow)
         return candles
 
 

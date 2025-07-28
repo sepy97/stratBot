@@ -62,6 +62,10 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
     for trade in tradeDetailList:
         triggerPrice = trade[0]
         direction = trade[1]
+        if len(trade) > 2:
+            targetPrice = trade[2]
+        else:
+            targetPrice = float('inf')
         if direction == util.TickerStatus.LONG:
             entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high > triggerPrice), None)
         else:
@@ -71,10 +75,11 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
             continue
         entryTimestamp = intradayCandles[entryID].open_ts
         currentTrade = ({'symbol': sym, 
-                            'entryPrice': triggerPrice, 'entryTimestamp_sec': entryTimestamp,
-                            'daysOpen': daysOpen, 'direction': direction,
-                            'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp
-                            })
+                         'entryPrice': triggerPrice, 'entryTimestamp_sec': entryTimestamp,
+                         'daysOpen': daysOpen, 'direction': direction,
+                         'exitPrice': exitPrice, 'exitTimestamp_sec': exitTimestamp,
+                         'stop type': '', 'target': targetPrice
+                        })
  
         # Record combos and TFC during entry 
         # Setup entryPrice to be just above/below trigger price to avoid always reporting inside day
@@ -109,8 +114,16 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
                     prev_low=chartDictOld[tf][-1].previous_low
                 )
             # Record candle combo 
-            currentTrade[tf] = chartDictNew[tf][-2].to_string() + "-" + currentCandleDict[tf].to_string()   
-            currentTrade[tf + " combo"] = chartDictNew[tf][-2].get_kind() + chartDictNew[tf][-2].get_subtype() + "-" + currentCandleDict[tf].get_kind() + currentCandleDict[tf].get_subtype()
+            if len(chartDictNew[tf]) < 3:
+                print(f"Warning: Not enough candles in {tf} timeframe to record combo for {sym} on {tradeDay[0]}. Reduced combo recording.")
+                currentTrade[tf] = chartDictNew[tf][-2].to_string() + "-" + currentCandleDict[tf].to_string()
+                currentTrade[tf + " combo"] = (chartDictNew[tf][-2].get_kind() + chartDictNew[tf][-2].get_subtype() + "-" + 
+                                               currentCandleDict[tf].get_kind() + currentCandleDict[tf].get_subtype())
+            else:
+                currentTrade[tf] = chartDictNew[tf][-3].to_string() + "-" + chartDictNew[tf][-2].to_string() + "-" + currentCandleDict[tf].to_string()   
+                currentTrade[tf + " combo"] = (chartDictNew[tf][-3].get_kind() + chartDictNew[tf][-3].get_subtype() + "-" + 
+                                           chartDictNew[tf][-2].get_kind() + chartDictNew[tf][-2].get_subtype() + "-" + 
+                                           currentCandleDict[tf].get_kind() + currentCandleDict[tf].get_subtype())
             currentTrade["Prev D pattern"] = chartDictNew['d'][-2].get_pattern()
             # Record TFC
             if entryPrice > chartDictNew[tf][-1].open:
@@ -120,18 +133,32 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
         
         # Check for same day stop out
         # Get stop on the day of entry
-        stopPrice, exit_comment = strategy.getStop(chartDictNew, chartDictOld, currentTrade, intradayCandles, entryID)
+        stopPrice, exit_comment, *targetPrice = strategy.getStop(chartDictNew, chartDictOld, currentTrade, intradayCandles, entryID)
         currentTrade['stop'] = stopPrice
         currentTrade['exit_comment'] = exit_comment
+        if targetPrice:
+            currentTrade['target'] = targetPrice[0]  # in case target is changed every day, and not just set at entry
         # Check if stop out the same day (for efficiency, so we don't pull the same 1min data from API again)
         if direction == util.TickerStatus.LONG:
-            exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.low <= stopPrice), None)
+            exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if (candle.low <= stopPrice or candle.high >= currentTrade['target'])), None)
+            if not exitID is None:
+                if intradayCandles[exitID].low <= stopPrice:
+                    currentTrade['stop type'] = "same day stop hit"
+                    currentTrade['exitPrice'] = currentTrade['stop']
+                elif intradayCandles[exitID].high >= currentTrade['target']:
+                    currentTrade['stop type'] = "same day target hit"
+                    currentTrade['exitPrice'] = currentTrade['target']
         else:
-            exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if candle.high >= stopPrice), None)
+            exitID = next((ii for ii, candle in enumerate(intradayCandles[entryID+1:], start=entryID+1) if (candle.high >= stopPrice or candle.low <= currentTrade['target'])), None)
+            if not exitID is None:
+                if intradayCandles[exitID].high >= stopPrice:
+                    currentTrade['stop type'] = "same day stop hit"
+                    currentTrade['exitPrice'] = currentTrade['stop']
+                elif intradayCandles[exitID].low <= currentTrade['target']:
+                    currentTrade['stop type'] = "same day target hit"
+                    currentTrade['exitPrice'] = currentTrade['target']
         if not exitID is None:
-            currentTrade['exitPrice'] = stopPrice
             currentTrade['exitTimestamp_sec'] = intradayCandles[exitID].open_ts
-            currentTrade['stop type'] = "stop same day"
         tradeToReturn.append(currentTrade)
     return tradeToReturn
 
@@ -146,12 +173,15 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
 # Returns: None, updates trade dictionary in place
 def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
     trade['daysOpen'] = trade['daysOpen'] + 1
-    stopVal, exit_comment = strategy.getStop(chartDictNew, chartDictOld, trade)
+    stopVal, exit_comment, *targetVal = strategy.getStop(chartDictNew, chartDictOld, trade)
+    if targetVal:
+        trade['target'] = targetVal[0]  # in case target is changed every day, and not just set at entry
+
     trade['stop'] = stopVal
     trade['exit_comment'] = exit_comment
-    # If stop hit - find time when stop hit, also check if we gapped stop
-    if  ((trade['direction'] == util.TickerStatus.LONG and chartDictNew['d'][-1].low <= trade['stop']) or
-        (trade['direction'] == util.TickerStatus.SHORT and chartDictNew['d'][-1].high >= trade['stop'])):
+    # If stop hit or target achieved - find time when stop hit, also check if we gapped stop or target
+    if  ((trade['direction'] == util.TickerStatus.LONG and (chartDictNew['d'][-1].low <= trade['stop'] or chartDictNew['d'][-1].high >= trade['target'])) or
+        (trade['direction'] == util.TickerStatus.SHORT and (chartDictNew['d'][-1].high >= trade['stop'] or chartDictNew['d'][-1].low <= trade['target']))):
         tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDictNew['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
         intradayCandles = session.getChart([trade['symbol']], 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
         intradayCandles = intradayCandles[trade['symbol']]
@@ -159,26 +189,42 @@ def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
         if trade['direction'] == util.TickerStatus.LONG:    # Bullish
             if intradayCandles[0].open < trade['stop']: # check if we gapped the stop
                 entryID = -1
+            elif intradayCandles[0].open > trade['target']:
+                entryID = -2
             else:
-                entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.low <= trade['stop']), None)
+                entryID = next((ii for ii, candle in enumerate(intradayCandles) if (candle.low <= trade['stop'] or candle.high >= trade['target'])), None)
+                if entryID is None:
+                    print(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open')
+                    return
+                if intradayCandles[entryID].low <= trade['stop']:
+                    trade['stop type'] = "stop hit"
+                    trade['exitPrice'] = trade['stop']
+                elif intradayCandles[entryID].high >= trade['target']:
+                    trade['stop type'] = "target hit"
+                    trade['exitPrice'] = trade['target']
         else:   # Bearish
             if intradayCandles[0].open > trade['stop']: # check if we gapped the stop
                 entryID = -1
+            elif intradayCandles[0].open < trade['target']:
+                entryID = -2
             else:
-                entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high >= trade['stop']), None)
+                entryID = next((ii for ii, candle in enumerate(intradayCandles) if (candle.high >= trade['stop'] or candle.low <= trade['target'])), None)
+                if entryID is None:
+                    print(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open')
+                    return
+                if intradayCandles[entryID].high >= trade['stop']:
+                    trade['stop type'] = "stop hit"
+                    trade['exitPrice'] = trade['stop']
+                elif intradayCandles[entryID].low <= trade['target']:
+                    trade['stop type'] = "target hit"
+                    trade['exitPrice'] = trade['target']
         # Record exit price and time 
-        if entryID is None:
-            print(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}')
-            trade['exitPrice'] = trade['stop']
-            trade['stop type'] = "stop near-hit"
-        elif entryID == -1: # stop gapped
+        if entryID < 0: # stop or target gapped 
             trade['exitPrice'] = intradayCandles[0].open
+            trade['stop type'] = "stop gapped" if entryID == -1 else "target gapped"
             trade['exitTimestamp_sec'] = intradayCandles[0].open_ts
-            trade['stop type'] = "stop gapped"
-        else:   # stop hit, record exit price and time (no need to check for gap - already checked earlier)
-            trade['exitPrice'] = trade['stop']
+        else:   # stop hit or target reached, price is already recorded earlier, just record the time (no need to check for gap - already checked earlier)
             trade['exitTimestamp_sec'] = intradayCandles[entryID].open_ts
-            trade['stop type'] = "stop hit"
   
 def printTrade(trade):
     entryTime = datetime.fromtimestamp(trade['entryTimestamp_sec'])
@@ -288,8 +334,8 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
 
 def backtest_symbol(dailyChart, chartDict, symbol, er_list, session, strategy):
     trades = []
-    lastDay = pd.to_datetime(dailyChart[0].open_ts, unit='s')
-    for day_id in range(1, len(dailyChart)):
+    lastDay = pd.to_datetime(dailyChart[1].open_ts, unit='s')
+    for day_id in range(2, len(dailyChart)):
         # Update charts
         dayCandleToAdd = dailyChart[day_id]
         dayDateToAdd = pd.to_datetime(dayCandleToAdd.open_ts, unit='s')
@@ -340,12 +386,12 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     # Currently testing only Daily and higher TF strategy, so we simply truncate startDay to the beginning of the day and endDay to the end of the day
     startDay = pd.to_datetime(startDay_str).tz_localize(timezone).replace(hour=6, minute=30, second=0)
     endDay = pd.to_datetime(endDay_str).tz_localize(timezone).replace(hour=23, minute=59, second=0)
-    # Since our actionable signals require previous day to be bullish/bearish, we need to get the last day when market was open prior to startDay
-    startDayToQuery = mtm.getCandleOpenCloseTime(startDay.timestamp(), 'd', n_pre=1, n_post=0)
+    # Pull two extra days before startDay to be able to form combos like 3-2-2, 1-2-2 (for rev strat detection)
+    startDayToQuery = mtm.getCandleOpenCloseTime(startDay.timestamp(), 'd', n_pre=2, n_post=0)
     lastDayBeforeRange = startDayToQuery['pre'][0]
     
     # Get daily chart spanning full range of days. This is dictionary {'symbol' --> [candle list]}
-    dailyChart = session.getChart(symbol_list=watchlist, timeframe_sym='d', start_timestamp=lastDayBeforeRange[0].timestamp(), end_timestamp=endDay.timestamp())
+    dailyChart = session.getChart(symbol_list=watchlist, timeframe_sym='d', start_timestamp=startDayToQuery['pre'][-1][0].timestamp(), end_timestamp=endDay.timestamp())
     # Note: API calls can get multiple symbols at once, but not multiple timeframes for the same symbol. So we need to get all timeframes for each symbol separately
     TF_sym_list = ['d', 'w', 'm', 'q', 'y']
     chartByTimeframe = dict.fromkeys(TF_sym_list)
@@ -354,8 +400,8 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     # Initialize all higher TF charts (W and higher). This will generate a dictionary {'timeframe' --> {'symbol' --> [candle list]}}
     # Note: we need an extra candle for each TF to evaluate if there is AS on that TF
     for TF_sym in TF_sym_list[1:]:
-        firstCandleToQuery = mtm.getCandleOpenCloseTime(startDay.timestamp(), TF_sym, n_pre=1, n_post=0)
-        firstCandleToQuery = firstCandleToQuery['pre'][0]
+        firstCandleToQuery = mtm.getCandleOpenCloseTime(startDay.timestamp(), TF_sym, n_pre=2, n_post=0)
+        firstCandleToQuery = firstCandleToQuery['pre'][-1]
         chartByTimeframe[TF_sym] = session.getChart(symbol_list=watchlist, timeframe_sym=TF_sym, start_timestamp=firstCandleToQuery[0].timestamp(), end_timestamp=lastDayBeforeRange[1].timestamp())
     # Swap order of keys in the dictionary to {'symbol' --> {'timeframe' --> [candle list]}}
     chartDict = {symbol: {TF_sym: chartByTimeframe[TF_sym][symbol] for TF_sym in chartByTimeframe.keys()} for symbol in watchlist}
@@ -421,12 +467,12 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
 #       Update status of existing trades
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
-    startDay_str = "2025-01-01 0:30:00"
+    startDay_str = "2025-04-01 0:30:00"
     endDay_str = "2025-04-30 23:30:00"
     timezone = 'America/Los_Angeles'
     earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_2025-05-18.csv'
     watchlist_name = 'NASDAQ100_2025'
-    strategy_name = "BasicDailyAS"
+    strategy_name = "DailyTrigAndTarget"
     runBacktest(
         startDay_str=startDay_str, 
         endDay_str=endDay_str, 
