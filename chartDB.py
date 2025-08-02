@@ -42,7 +42,7 @@ class ChartDB:
     # --------------------------------------------------------
     # DB operations
     # --------------------------------------------------------
-    def insert_candles(self, timeframe: str, df: pd.DataFrame):
+    def insert_candles(self, timeframe: str, df_org: pd.DataFrame):
         """
         Insert a DataFrame of candles into DB.
 
@@ -52,15 +52,28 @@ class ChartDB:
 
         Will automatically reset index if needed.
         """
-        if df.empty:
+        if df_org.empty:
             return
         
+        df = df_org.copy()  # Work on a copy to avoid modifying original DataFrame
+
         # ✅ If DataFrame has MultiIndex, flatten it
         if isinstance(df.index, pd.MultiIndex):
+            # Get the timestamp level
+            ts_level = df.index.levels[1]
+
+            # Make sure it's tz-aware
+            if ts_level.tz is None:
+                raise ValueError("[chartDB] Timestamp level must be timezone-aware before inserting.")
+
+            # Convert to EST
+            df.index = df.index.set_levels(
+                ts_level.tz_convert("America/New_York"), level=1
+            )
             df.reset_index(inplace=True)
         # ✅ If DataFrame has single index = timestamp, ensure timestamp is column
-        elif df.index.name == "timestamp":
-            df = df.reset_index()
+        else: 
+            raise ValueError("[chartDB] DataFrame must have a MultiIndex with (symbol, timestamp) or a single index with timestamp.")
 
         # ✅ Ensure required columns exist
         required_cols = {"symbol", "timestamp", "open", "high", "low", "close",

@@ -36,7 +36,7 @@ class DataRetrieval:
     def _get_db(self):
         pid = os.getpid()
         if self._db is None or self._pid != pid:
-            self._db = ChartDB(self._db_path, alpaca_fetch_func=self.alpaca_fetch)
+            self._db = ChartDB(self._db_path)
             self._pid = pid
         return self._db
 #aggregation_resample_dict = {'d': 'D', 'w': 'W', 'm': 'ME', 'q': 'QE', 'y': 'YE'}
@@ -357,8 +357,8 @@ class DataRetrieval:
         db = self._get_db() # ✅ ensures correct ChartDB for this process
         symbols = request_params.symbol_or_symbols
         timeframe = str(request_params.timeframe)
-        start = request_params.start
-        end = request_params.end
+        start = request_params.start.tz_localize('UTC').tz_convert('America/New_York')
+        end = request_params.end.tz_localize('UTC').tz_convert('America/New_York')
         # 📝 Normalize symbols into a list for querying
         symbol_list = symbols if isinstance(symbols, list) else [symbols]
 
@@ -385,7 +385,10 @@ class DataRetrieval:
         db.insert_candles(timeframe, df_alpaca)
 
         # 6️⃣ Merge DB + Alpaca
-        df_combined = pd.concat([df_from_db, df_alpaca]).sort_index()
+        if df_from_db.empty:
+            df_combined = df_alpaca
+        else:
+            df_combined = pd.concat([df_from_db, df_alpaca]).sort_index()
         df_combined = df_combined.loc[~df_combined.index.duplicated(keep="last")]
 
         return df_combined
@@ -417,8 +420,9 @@ if __name__ == "__main__":
     session = DataRetrieval(market_time_manager=time_manager)
     startDay = pd.to_datetime("2025-04-15 9:29:00").tz_localize(EST)
     endDay = pd.to_datetime("2025-04-15 11:32:00").tz_localize(EST)
-    watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
-    watchlist = watchlist[0].to_list()
+    #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
+    #watchlist = watchlist[0].to_list()
+    watchlist = ['IWM']
     #chart = session.get_stock_bars(StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame.Day, start=startDay, end=endDay))
     #chart = chart.df
     #print(chart)
