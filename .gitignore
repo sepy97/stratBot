@@ -6,3 +6,4 @@ alpaca_config.py
 resample_test.py
 Trades
 Trades old
+*.db

@@ -8,11 +8,17 @@ import candles
 import time
 import multiprocessing as mp
 import MarketTimeManager as mtm
+import os
+from chartDB import ChartDB
 
 class DataRetrieval:
     #_lock = None
     #_manager = None
-    def __init__(self, market_time_manager=None):
+    def __init__(self, market_time_manager=None, db_path="chartDB.db"):
+        #self.db = chartDB.ChartDB(db_path="chartDB.db", alpaca_fetch_func=self._alpaca_fetch)
+        self._db = None
+        self._pid = None
+        self._db_path = db_path
         self.session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
         if market_time_manager is None:
             self.market_time_manager = mtm.MarketTimeManager()
@@ -26,6 +32,13 @@ class DataRetrieval:
         #    print("[DEBUG] Lock initialized")
         self.MAX_REQUESTS = 5
         self.aggregation_resample_dict = {'d': 'D', 'w': 'W', 'm': 'ME', 'q': 'QE', 'y': 'YE'}
+    
+    def _get_db(self):
+        pid = os.getpid()
+        if self._db is None or self._pid != pid:
+            self._db = ChartDB(self._db_path, alpaca_fetch_func=self.alpaca_fetch)
+            self._pid = pid
+        return self._db
 #aggregation_resample_dict = {'d': 'D', 'w': 'W', 'm': 'ME', 'q': 'QE', 'y': 'YE'}
 #    @classmethod
 #    def initDataRetrieval(cls):
@@ -79,6 +92,7 @@ class DataRetrieval:
 # getCalendarOpenCloseTime returns the beginning of the actual bar whereas Alpaca takes calendar dates (for example, if first trading day of a month is 3rd then requesting monthly candle from 3rd of that month will return next month candle)
 # Note: we need to pull one extra candle prior to the sequence so as to identify whether the first candle is 1, 2, or 3
     def getChart(self, symbol_list, timeframe_sym, start_timestamp, end_timestamp):
+        self._get_db()  # Ensure the DB is initialized
         EST = 'America/New_York'
         PST = "America/Los_Angeles"
         intraday = False
@@ -340,13 +354,51 @@ class DataRetrieval:
                     f.write(candle.to_string_full() + '\n')
 
     def getChartWithPrintout(self, request_params):
-        request_counter = self.MAX_REQUESTS
+        db = self._get_db() # ✅ ensures correct ChartDB for this process
+        symbols = request_params.symbol_or_symbols
+        timeframe = str(request_params.timeframe)
+        start = request_params.start
+        end = request_params.end
+        # 📝 Normalize symbols into a list for querying
+        symbol_list = symbols if isinstance(symbols, list) else [symbols]
+
+        # 1️⃣ Query DB for what’s there
+        df_from_db = db.get_candles(symbol_list, timeframe, start, end)
+        # 2️⃣ Determine missing ranges (NOTE: now per-symbol)
+        missing_ranges = db.find_missing_ranges(symbol_list, timeframe, start, end)
+
+        # 3️⃣ ✅ If DB fully covers the range, return immediately
+        if not missing_ranges:
+            return df_from_db
+        # 4️⃣ Build superset range for API call
+        sup_start = min(r[1] for r in missing_ranges)
+        sup_end   = max(r[2] for r in missing_ranges)
+        request_params_full = StockBarsRequest(
+            symbol_or_symbols=symbol_list,
+            timeframe=request_params.timeframe,
+            start=sup_start,
+            end=sup_end
+        )
+        df_alpaca = self.alpaca_fetch(request_params_full)
+
+        # 5️⃣ Insert fetched candles
+        db.insert_candles(timeframe, df_alpaca)
+
+        # 6️⃣ Merge DB + Alpaca
+        df_combined = pd.concat([df_from_db, df_alpaca]).sort_index()
+        df_combined = df_combined.loc[~df_combined.index.duplicated(keep="last")]
+
+        return df_combined
+    
+    def alpaca_fetch(self, request_params):
+        """ Fetches stock bars from Alpaca, handling retries and missing ranges. """
+
+        request_counter = self.MAX_REQUESTS        
         while request_counter > 0:
             try:
                 bars = self.session.get_stock_bars(request_params)
                 break
             except Exception as e:
-                #with self._lock:
                 request_counter -= 1
                 if request_counter == 0:
                     print(f"Error retrieving bars. Error: {e} - giving up after {self.MAX_REQUESTS} attempts.")
@@ -370,7 +422,14 @@ if __name__ == "__main__":
     #chart = session.get_stock_bars(StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame.Day, start=startDay, end=endDay))
     #chart = chart.df
     #print(chart)
+    chart = session.getChart(symbol_list=watchlist, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    print('Hourly chart: ')
+    for ticker in chart.keys():
+        print('Symbol: ' + ticker)
+        for candle in chart[ticker]:
+            print(candle.to_string_full())
 
+    '''
     chart = session.getChart(symbol_list=watchlist, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Hourly chart: ')
     for ticker in chart.keys():
@@ -412,7 +471,7 @@ if __name__ == "__main__":
         print('Symbol: ' + ticker)
         for candle in chart[ticker]:
             print(candle.to_string_full())
-   
+    '''
     # see: https://forum.alpaca.markets/t/how-to-get-bars-within-30-mins-time-frame/11613
     
     # DASH open price on March 19 2025 - TV shows 185.23 (intraday), 186 (Daily). 186.27 reported - matches TOS intraday chart
