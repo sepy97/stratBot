@@ -1,5 +1,5 @@
 from alpaca.data import StockHistoricalDataClient
-from datetime import datetime
+from datetime import datetime, timedelta
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca_config import alpaca_config
@@ -10,42 +10,69 @@ import multiprocessing as mp
 import MarketTimeManager as mtm
 import os
 from chartDB import ChartDB
+from multiprocessing import Manager, Lock
+from functools import partial
+
+shared_limiter = None  # Global variable to hold the shared rate limiter instance
+def init_pool(limiter):
+    global shared_limiter
+    shared_limiter = limiter  # Assign the shared rate limiter to the global variable
+
+class SharedRateLimiter:
+    def __init__(self, manager=None, max_requests_per_minute=200):
+        self.max_requests = max_requests_per_minute
+        self.time_window = 60  # seconds
+        if manager is None:
+            manager = Manager()
+        self.timestamps = manager.list()  # shared list of timestamps
+        self.lock = Lock()
+
+    def acquire(self):
+        while True:
+            now = datetime.now()
+            wait_time = 0
+            with self.lock:
+                # Remove timestamps older than 60 seconds
+                one_minute_ago = now - timedelta(seconds=60)
+                while self.timestamps and self.timestamps[0] < one_minute_ago:
+                    self.timestamps.pop(0)
+
+                if len(self.timestamps) < self.max_requests:
+                    self.timestamps.append(now)
+                    print(f"[{mp.current_process().name}] Request allowed at {time.strftime('%X')}")
+                    return  # Let the caller proceed
+                else:
+                    # Need to wait: compute how long until the oldest timestamp expires
+                    wait_time = 60 - (now - self.timestamps[0]).total_seconds()
+                    print(f"[{mp.current_process().name}] Rate limit {self.max_requests} hit. Sleeping for {wait_time:.2f} sec.")
+                    wait_time = max(wait_time, 0.01)  # minimum wait to avoid tight loop
+
+            # Outside the lock, wait for the quota to open up
+            time.sleep(wait_time)
+
 
 class DataRetrieval:
-    #_lock = None
-    #_manager = None
-    def __init__(self, market_time_manager=None, db_path="chartDB.db"):
+    def __init__(self, rate_limiter, market_time_manager=None, db_path="chartDB.db"):
         #self.db = chartDB.ChartDB(db_path="chartDB.db", alpaca_fetch_func=self._alpaca_fetch)
-        self._db = None
-        self._pid = None
-        self._db_path = db_path
+        self.db = ChartDB(db_path)
+        self.rate_limiter = rate_limiter
         self.session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
+        self.alpaca_config = alpaca_config
         if market_time_manager is None:
             self.market_time_manager = mtm.MarketTimeManager()
         else:
             self.market_time_manager = market_time_manager
-        #self.manager = mp.Manager()
-        #self._lock = lock
-        #if DataRetrieval._lock is None:
-        #    DataRetrieval._manager = Manager()
-        #    DataRetrieval._lock = DataRetrieval._manager.Lock()
-        #    print("[DEBUG] Lock initialized")
         self.MAX_REQUESTS = 5
         self.aggregation_resample_dict = {'d': 'D', 'w': 'W', 'm': 'ME', 'q': 'QE', 'y': 'YE'}
-    
-    def _get_db(self):
-        pid = os.getpid()
-        if self._db is None or self._pid != pid:
-            self._db = ChartDB(self._db_path)
-            self._pid = pid
-        return self._db
+
+#    def _get_db(self):
+#        pid = os.getpid()
+#        if self._db is None or self._pid != pid:
+#            self._db = ChartDB(self._db_path)
+#            self._pid = pid
+#        return self._db
 #aggregation_resample_dict = {'d': 'D', 'w': 'W', 'm': 'ME', 'q': 'QE', 'y': 'YE'}
-#    @classmethod
-#    def initDataRetrieval(cls):
-#        manager = Manager()
-#        instance = cls(lock=manager.Lock())
-#        instance._manager = manager
-#        return instance
+
 # This function creates a single OHLC dataframe record from a series of smaller TF dataframes (assuming all smaller TF dataframes are for the same symbol)
     def aggregate_barsDF(self, df):
         if not df.empty:
@@ -58,11 +85,6 @@ class DataRetrieval:
             })
             result["timestamp"]=df.index.get_level_values("timestamp")[0]
             return result
-
-#def initSession():
-#    stock_client = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
-#    lock = mp.Lock()
-#    return {'session': stock_client, 'mp_lock': lock}
 
 # Returns a dictionary: {symbol --> [list of candles in chronological order (most recent candle last)]}
 # First (oldest) candle in the list is the oldest candle that closes after start_timestamp (if start_timestamp is within the candle - it is the first candle; otherwise it is the next candle)
@@ -92,7 +114,7 @@ class DataRetrieval:
 # getCalendarOpenCloseTime returns the beginning of the actual bar whereas Alpaca takes calendar dates (for example, if first trading day of a month is 3rd then requesting monthly candle from 3rd of that month will return next month candle)
 # Note: we need to pull one extra candle prior to the sequence so as to identify whether the first candle is 1, 2, or 3
     def getChart(self, symbol_list, timeframe_sym, start_timestamp, end_timestamp):
-        self._get_db()  # Ensure the DB is initialized
+        #self._get_db()  # Ensure the DB is initialized
         EST = 'America/New_York'
         PST = "America/Los_Angeles"
         intraday = False
@@ -354,7 +376,7 @@ class DataRetrieval:
                     f.write(candle.to_string_full() + '\n')
 
     def getChartWithPrintout(self, request_params):
-        db = self._get_db() # ✅ ensures correct ChartDB for this process
+        #db = self._get_db() # ✅ ensures correct ChartDB for this process
         symbols = request_params.symbol_or_symbols
         timeframe = str(request_params.timeframe)
         start = request_params.start.tz_localize('UTC').tz_convert('America/New_York')
@@ -363,9 +385,9 @@ class DataRetrieval:
         symbol_list = symbols if isinstance(symbols, list) else [symbols]
 
         # 1️⃣ Query DB for what’s there
-        df_from_db = db.get_candles(symbol_list, timeframe, start, end)
+        df_from_db = self.db.get_candles(symbol_list, timeframe, start, end)
         # 2️⃣ Determine missing ranges (NOTE: now per-symbol)
-        missing_ranges = db.find_missing_ranges(symbol_list, timeframe, start, end)
+        missing_ranges = self.db.find_missing_ranges(symbol_list, timeframe, start, end)
 
         # 3️⃣ ✅ If DB fully covers the range, return immediately
         if not missing_ranges:
@@ -381,8 +403,8 @@ class DataRetrieval:
         )
         df_alpaca = self.alpaca_fetch(request_params_full)
 
-        # 5️⃣ Insert fetched candles
-        db.insert_candles(timeframe, df_alpaca)
+        # 5️⃣ Insert fetched candles TODO: only insert continuos range for D and higher TFs, and intraday - within the same day
+        self.db.insert_candles(timeframe, df_alpaca)
 
         # 6️⃣ Merge DB + Alpaca
         if df_from_db.empty:
@@ -399,6 +421,7 @@ class DataRetrieval:
         request_counter = self.MAX_REQUESTS        
         while request_counter > 0:
             try:
+                self.rate_limiter.acquire()  # Wait for rate limit slot
                 bars = self.session.get_stock_bars(request_params)
                 break
             except Exception as e:
@@ -412,27 +435,62 @@ class DataRetrieval:
         bars = bars.df
         return bars
 
+# -------------------------------
+# Sample Worker Function
+# -------------------------------
+def backtest_symbol(symbol, market_time_manager, time_frame, startTS, endTS):
+    dr = DataRetrieval(shared_limiter, market_time_manager=market_time_manager, db_path="chartDB_test.db")
+    if isinstance(symbol, str):
+        symbol = [symbol]
+    data = dr.getChart(symbol_list=symbol, timeframe_sym=time_frame, start_timestamp=startTS, end_timestamp=endTS)
+    return data
+
+# -------------------------------
+# Main
+# -------------------------------
 if __name__ == "__main__":
+    symbols = ['AAPL', 'GOOG', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'NFLX', 'META']
     EST = 'America/New_York'
     pd.options.mode.copy_on_write = True
     #session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     time_manager = mtm.MarketTimeManager()
-    session = DataRetrieval(market_time_manager=time_manager)
+    #session = DataRetrieval(market_time_manager=time_manager)
     startDay = pd.to_datetime("2025-04-15 9:29:00").tz_localize(EST)
     endDay = pd.to_datetime("2025-04-15 11:32:00").tz_localize(EST)
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
     #watchlist = watchlist[0].to_list()
-    watchlist = ['IWM']
+    #watchlist = ['IWM']
     #chart = session.get_stock_bars(StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame.Day, start=startDay, end=endDay))
     #chart = chart.df
     #print(chart)
-    chart = session.getChart(symbol_list=watchlist, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+
+    file_path = "chartDB_test.db"
+
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    
+    with mp.Manager() as manager:
+        limiter = SharedRateLimiter(manager)
+
+        with mp.Pool(processes=4, initializer=init_pool, initargs=(limiter,)) as pool:
+            chart_list = pool.starmap(backtest_symbol, 
+                                 [(symbol, time_manager, 'm60', startDay.timestamp(), endDay.timestamp()) for symbol in symbols]
+                                )   
+            chart_single = backtest_symbol(symbols, time_manager, 'm60', startDay.timestamp(), endDay.timestamp())
+                                  
+    #chart = session.getChart(symbol_list=watchlist, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Hourly chart: ')
-    for ticker in chart.keys():
+    for ticker in chart_single.keys():
         print('Symbol: ' + ticker)
-        for candle in chart[ticker]:
+        for candle in chart_single[ticker]:
             print(candle.to_string_full())
 
+    print('Hourly chart from multiprocessing: ')
+    for chart in chart_list:
+        for ticker in chart.keys():
+            print('Symbol: ' + ticker)
+            for candle in chart[ticker]:
+                print(candle.to_string_full())
     '''
     chart = session.getChart(symbol_list=watchlist, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Hourly chart: ')

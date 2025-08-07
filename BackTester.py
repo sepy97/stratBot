@@ -64,8 +64,10 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
         direction = trade[1]
         if len(trade) > 2:
             targetPrice = trade[2]
-        else:
+        elif direction == util.TickerStatus.LONG:
             targetPrice = float('inf')
+        elif direction == util.TickerStatus.SHORT:
+            targetPrice = 0.0
         if direction == util.TickerStatus.LONG:
             entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high > triggerPrice), None)
         else:
@@ -124,6 +126,7 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
                 currentTrade[tf + " combo"] = (chartDictNew[tf][-3].get_kind() + chartDictNew[tf][-3].get_subtype() + "-" + 
                                            chartDictNew[tf][-2].get_kind() + chartDictNew[tf][-2].get_subtype() + "-" + 
                                            currentCandleDict[tf].get_kind() + currentCandleDict[tf].get_subtype())
+                
             currentTrade["Prev D pattern"] = chartDictNew['d'][-2].get_pattern()
             # Record TFC
             if entryPrice > chartDictNew[tf][-1].open:
@@ -135,6 +138,8 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
         # Get stop on the day of entry
         stopPrice, exit_comment, *targetPrice = strategy.getStop(chartDictNew, chartDictOld, currentTrade, intradayCandles, entryID)
         currentTrade['stop'] = stopPrice
+        currentTrade['initial stop'] = stopPrice  # Initial stop is the same as the stop on the day of entry
+        currentTrade['RR'] = (currentTrade['target'] - currentTrade['entryPrice']) / (currentTrade['entryPrice'] - currentTrade['stop']) 
         currentTrade['exit_comment'] = exit_comment
         if targetPrice:
             currentTrade['target'] = targetPrice[0]  # in case target is changed every day, and not just set at entry
@@ -157,6 +162,8 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
                 elif intradayCandles[exitID].low <= currentTrade['target']:
                     currentTrade['stop type'] = "same day target hit"
                     currentTrade['exitPrice'] = currentTrade['target']
+        currentTrade['initialStop'] = currentTrade['stop']
+        currentTrade["RR"] = (currentTrade['target']-currentTrade['entryPrice'])/(currentTrade['entryPrice'] - currentTrade['stop'])
         if not exitID is None:
             currentTrade['exitTimestamp_sec'] = intradayCandles[exitID].open_ts
         tradeToReturn.append(currentTrade)
@@ -332,7 +339,8 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
         chartDictNew['y'][-1].close = dayCandleToAdd.close
     return chartDictNew
 
-def backtest_symbol(dailyChart, chartDict, symbol, er_list, session, strategy):
+def backtest_symbol(dailyChart, chartDict, symbol, er_list, strategy, rate_limiter):
+    session = DataRetrieval(market_time_manager=session.market_time_manager, rate_limiter=rate_limiter)  # Recreate session to avoid issues with multiprocessing
     trades = []
     lastDay = pd.to_datetime(dailyChart[1].open_ts, unit='s')
     for day_id in range(2, len(dailyChart)):
@@ -467,12 +475,12 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
 #       Update status of existing trades
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
-    startDay_str = "2025-04-01 0:30:00"
-    endDay_str = "2025-04-30 23:30:00"
+    startDay_str = "2025-05-01 0:30:00"
+    endDay_str = "2025-07-31 23:30:00"
     timezone = 'America/Los_Angeles'
-    earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_2025-05-18.csv'
+    earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_blank.csv'
     watchlist_name = 'NASDAQ100_2025'
-    strategy_name = "DailyTrigAndTarget"
+    strategy_name = "BasicDailyAS"
     runBacktest(
         startDay_str=startDay_str, 
         endDay_str=endDay_str, 
