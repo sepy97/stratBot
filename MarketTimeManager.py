@@ -5,10 +5,11 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetCalendarRequest
 from alpaca_config import alpaca_config
 import pytz
+from typing import List, Tuple, Dict, Any
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT
-
+SUPPORTED_TIMEFRAMES = ['y', 'q', 'm', 'w', 'd', 'm60', 'm30', 'm15', 'm5', 'm1']
 timeframe_LUT = {'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
 class MarketTimeManager:
     def __init__(self):
@@ -196,7 +197,9 @@ class MarketTimeManager:
     #     For daily and instraday same approach does not work because holidays can be larger than the entire calendar period of corresponding timeframe
     #     
 
-    def getCandleOpenCloseTime(self, timestamp_s, timeframe_sym, n_pre=1, n_post=1, tz='America/New_York'):
+    def getCandleOpenCloseTime(self, timestamp_s: int, timeframe_sym: str, n_pre: int =1, n_post: int =1, tz: str ='America/New_York') -> Dict[str, Any]:
+        if not timeframe_sym in SUPPORTED_TIMEFRAMES:
+            raise ValueError(f"Unsupported timeframe: {timeframe_sym}. Supported timeframes are: {SUPPORTED_TIMEFRAMES}")
         candleOpenCloseTime = {'pre': [], 'current': None, 'post': []}
         #nyse = mcal.get_calendar('NYSE')
         tz = pytz.timezone('America/New_York')
@@ -453,7 +456,42 @@ class MarketTimeManager:
         for ii in range(len(candleOpenCloseTime['post'])):
             candleOpenCloseTime['post'][ii] = tuple(map(lambda x: x.tz_convert(tz), candleOpenCloseTime['post'][ii]))
         return candleOpenCloseTime
-
+    
+    def getCandleList(self, timeframe: str, start_time: int, end_time: int) -> Tuple[List[pd.Timestamp], List[pd.Timestamp]]:
+        if not timeframe in SUPPORTED_TIMEFRAMES:
+            raise ValueError(f"Unsupported timeframe: {timeframe}. Supported timeframes are: {SUPPORTED_TIMEFRAMES}")
+        start_time = pd.to_datetime(start_time, unit='s', utc=True).tz_convert('America/New_York')
+        end_time = pd.to_datetime(end_time, unit='s', utc=True).tz_convert('America/New_York')
+        if start_time >= end_time:
+            raise ValueError("start_time must be earlier than end_time")
+        if start_time.date() < self.calendar.index[0] or end_time.date() > self.calendar.index[-1]:  # timestamp is outside of the calendar range
+            print(f"Start time {start_time} or end time {end_time} is outside of the calendar range")
+            return []
+        if timeframe in ['m60', 'm30', 'm15', 'm5', 'm1']:
+            period_s = int(timeframe[1:])*60
+            candle_count = (end_time - start_time).total_seconds()/period_s + 1
+        elif timeframe=='d':
+            candle_count = (end_time - start_time).days + 1
+        elif timeframe=='w':
+            candle_count = (end_time - start_time).days//7 + 1
+        elif timeframe=='m':
+            candle_count = (end_time.year - start_time.year)*12 + end_time.month - start_time.month + 1
+        elif timeframe=='q':
+            candle_count = (end_time.year - start_time.year)*4 + (end_time.month-1)//3 - (start_time.month-1)//3 + 1
+        elif timeframe=='y':
+            candle_count = end_time.year - start_time.year + 1
+        else:
+            raise ValueError(f"Unsupported timeframe: {timeframe}. Supported timeframes are: {SUPPORTED_TIMEFRAMES}")
+        candle_count = int(candle_count)
+        candle_list = []
+        candle_list_candidate = self.getCandleOpenCloseTime(start_time.timestamp(), timeframe, n_post=candle_count)
+        if candle_list_candidate['current']:
+            candle_list.extend([candle_list_candidate['current']])
+        candle_list.extend(candle_list_candidate['post'])
+        candle_list_open  = [c[0] for c in candle_list if (c[0] >= start_time and c[1] <= end_time)]
+        candle_list_close = [c[1] for c in candle_list if (c[0] >= start_time and c[1] <= end_time)]
+        return candle_list_open, candle_list_close
+    
 if __name__ == "__main__":
     #TF = 'm15'
     timestamp_dt = pd.to_datetime("2024-1-2 1:00:00").tz_localize('America/Los_Angeles')

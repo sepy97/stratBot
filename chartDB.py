@@ -3,6 +3,7 @@ import pandas as pd
 import time
 from datetime import datetime
 from typing import Optional, Callable, List, Tuple, Union
+from itertools import product
 
 # Optional: for testing only
 from collections import namedtuple
@@ -26,7 +27,7 @@ class ChartDB:
         CREATE TABLE IF NOT EXISTS candles (
             symbol TEXT NOT NULL,
             timeframe TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
             open REAL,
             high REAL,
             low REAL,
@@ -82,7 +83,9 @@ class ChartDB:
             raise ValueError(f"Missing columns in DataFrame. Got {df.columns}, expected {required_cols}")
 
         # ✅ Convert timestamp to string for SQLite storage
-        df["timestamp"] = df["timestamp"].astype(str)
+        #df["timestamp"] = df["timestamp"].astype(str)
+        # ✅ Convert timestamp to integer for SQLite storage
+        df["timestamp"] = df["timestamp"].astype('int64') // 10**9  # convert to seconds since epoch
 
         rows = [
             (symbol, timeframe, timestamp, open_, high, low, close, volume, trade_count, vwap)
@@ -97,6 +100,74 @@ class ChartDB:
         """, rows)
         self.conn.commit()
 
+    def get_candles_by_open_timestamp(
+        self,
+        symbol_or_symbols: Union[str, List[str]], 
+        timeframe: str, 
+        open_ts: list[pd.Timestamp], 
+        max_values_rows: int = 100_000,
+        batch_size: int = 50_000) -> pd.DataFrame:
+
+        symbols = symbol_or_symbols if isinstance(symbol_or_symbols, List) else [symbol_or_symbols]
+        total_rows = len(symbols) * len(open_ts)
+        df_found = pd.DataFrame()
+
+        if total_rows == 0: # nothing to do 
+            return df_found
+        # Convert timestamps to string for DB comparison
+        open_ts_int = [int(ts.timestamp()) for ts in open_ts]
+
+        if total_rows < max_values_rows:
+            # --- Small dataset: VALUES() approach ---
+            values_clause = ",".join(["(?, ?)"] * total_rows)
+            flat_params = []
+            flat_params = [item for pair in product(symbols, open_ts_int) for item in pair] # create all possible (symbol, timestamp) pairs
+            flat_params.append(timeframe)  # add timeframe as the last parameter
+            query = f"""
+                SELECT *
+                FROM candles
+                WHERE (symbol, timestamp) IN (VALUES {values_clause})
+                AND timeframe = ?
+            """
+            df_found = pd.read_sql_query(query, self.conn, params=flat_params)
+        else:
+            # --- Large dataset: TEMP TABLE + batched inserts ---
+            cur = self.conn.cursor()
+            cur.execute("DROP TABLE IF EXISTS temp_open_times")
+            cur.execute("""
+                CREATE TEMPORARY TABLE temp_open_times (
+                    symbol TEXT,
+                    timestamp INTEGER
+                )
+            """)
+            # Insert in batches
+            for start_idx in range(0, len(open_ts_int), batch_size):
+                ts_batch = open_ts_int[start_idx:start_idx + batch_size]
+                batch_rows = list(product(symbols, ts_batch))
+                cur.executemany(
+                    "INSERT INTO temp_open_times(symbol, timestamp) VALUES (?, ?)",
+                    batch_rows
+                )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_temp ON temp_open_times(symbol, timestamp)")
+            self.conn.commit()
+
+            # Join temp table with candles
+            query = """
+                SELECT c.*
+                FROM candles c
+                JOIN temp_open_times t
+                ON c.symbol = t.symbol AND c.timestamp = t.timestamp
+                WHERE c.timeframe = ?
+            """
+            df_found = pd.read_sql_query(query, self.conn, params=[timeframe])
+        # --- Post-processing ---
+        if not df_found.empty:
+            df_found['timestamp'] = pd.to_datetime(df_found['timestamp'], unit='s', utc=True).dt.tz_convert('America/New_York')
+            df_found.drop(columns=['timeframe'], inplace=True)
+            df_found.set_index(['symbol', 'timestamp'], inplace=True)
+            df_found.sort_index(inplace=True)
+        return df_found
+    '''
     def get_candles(self, symbols: Union[str, List[str]], timeframe: str,
                     start: Optional[pd.Timestamp] = None,
                     end: Optional[pd.Timestamp] = None,
@@ -110,6 +181,8 @@ class ChartDB:
         if isinstance(symbols, str):
             symbols = [symbols]  # unify to list
         dfs = []
+        start = start.timestamp() if start is not None else None
+        end = end.timestamp() if end is not None else None
         for i in range(0, len(symbols), chunk_size):
             chunk = symbols[i:i+chunk_size]
 
@@ -129,17 +202,18 @@ class ChartDB:
                 params.append(str(end))
             q += " ORDER BY symbol, timestamp ASC"
 
-            df_chunk = pd.read_sql_query(q, self.conn, params=params, parse_dates=["timestamp"])
+            #df_chunk = pd.read_sql_query(q, self.conn, params=params, parse_dates=["timestamp"])
+            df_chunk = pd.read_sql_query(q, self.conn, params=params)
             dfs.append(df_chunk)
 
         if not dfs:
             return pd.DataFrame()
 
         df = pd.concat(dfs)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit='s', utc=True).dt.tz_convert("America/New_York")
         df.set_index(["symbol", "timestamp"], inplace=True)
         return df
-    '''
+    
     def get_existing_range(self, symbol: str, timeframe: str) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
         """Return (min_timestamp, max_timestamp) for a given symbol/timeframe in DB."""
         cur = self.conn.execute("""
@@ -153,66 +227,23 @@ class ChartDB:
         return (pd.Timestamp(row["min_ts"]), pd.Timestamp(row["max_ts"]))
     '''
     # --------------------------------------------------------
-    # DB + API integration
-    # --------------------------------------------------------
-    def getChartWithPrintout(self, request_params):
-        """
-        Retrieves candles for one or multiple symbols from request_params.
-        - Checks DB first
-        - Calls Alpaca for missing ranges
-        - Returns DataFrame with MultiIndex (symbol, timestamp)
-        """
-        if self.alpaca_fetch_func is None:
-            raise RuntimeError("ChartDB needs an Alpaca fetch function to fill gaps.")
-        db = self._get_db() # ✅ ensures correct ChartDB for this process
-
-        symbols = request_params.symbol_or_symbols
-        timeframe = str(request_params.timeframe)
-        start = request_params.start
-        end = request_params.end
-        
-        # 📝 Normalize symbols into a list for querying
-        symbol_list = symbols if isinstance(symbols, list) else [symbols]
-
-        # 1️⃣ Query DB for what’s there
-        df_from_db = self.get_candles(symbol_list, timeframe, start, end)
-
-        # 2️⃣ Determine missing ranges (NOTE: now per-symbol)
-        missing_ranges_by_symbol = {}
-        for sym in symbol_list:
-            df_sym = df_from_db.loc[sym] if sym in df_from_db.index.get_level_values("symbol") else pd.DataFrame()
-            missing_ranges = self._find_missing_ranges(df_sym, start, end)
-            if missing_ranges:
-                missing_ranges_by_symbol[sym] = missing_ranges
-
-        # 3️⃣ ✅ If DB fully covers the range, return immediately
-        if not missing_ranges_by_symbol:
-            return df_from_db
-
-        # 4️⃣ Fetch missing ranges from Alpaca and insert
-        for m_start, m_end in missing_ranges:
-            # Build new request for this missing piece
-            req = StockBarsRequest(symbol_or_symbols=symbol,
-                                   timeframe=request_params.timeframe,
-                                   start=m_start,
-                                   end=m_end)
-
-            df_new = self._fetch_from_alpaca(req)
-            if not df_new.empty:
-                self.insert_candles(str(req.timeframe), df_new)
-
-        # 5️⃣ Query DB again — now complete
-        return self.get_candles(symbol, timeframe, start, end)
-
-    # --------------------------------------------------------
     # Helpers
     # --------------------------------------------------------
+    '''
     def find_missing_ranges(self, symbols: Union[str, List[str]], timeframe: str, start: pd.Timestamp, end: pd.Timestamp) -> List[Tuple[str, pd.Timestamp, pd.Timestamp]]:
         """
         For each symbol, find missing candle ranges in the DB.
         Returns: list of (symbol, missing_start, missing_end) tuples
         Assumes DB will hold continuous blocks for each symbol/timeframe.
         """
+        if timeframe == "1Min":
+            offset = pd.Timedelta(minutes=1)
+        elif timeframe == "1Day":
+            offset = pd.Timedelta(days=1)
+        elif timeframe == "1Week":
+            offset = pd.Timedelta(weeks=1)
+        elif timeframe == "1Month":
+            offset = pd.Timedelta(days=30)
         if isinstance(symbols, str):
             symbols = [symbols]
 
@@ -236,14 +267,51 @@ class ChartDB:
 
             # Missing block at the start?
             if start < min_ts:
-                missing.append((symbol, start, min_ts - pd.Timedelta(minutes=1)))
-
+                if timeframe == "1Min":
+                    missing.append((symbol, start, min_ts - pd.Timedelta(minutes=1)))
+                elif timeframe == "1Day":
+                    missing.append((symbol, start, min_ts.replace(hour=0, minute=0, second=0) - pd.Timedelta(days=1)))
+                elif timeframe == "1Week":
+                    missing.append((symbol, start, min_ts.replace(hour=0, minute=0, second=0) - pd.Timedelta(days=min_ts.weekday() + 1)))
+                elif timeframe == "1Month":
+                    month_start = min_ts.replace(day=1, hour=0, minute=0, second=0)
+                    missing.append((symbol, start, min_ts.replace(day=1, hour=0, minute=0, second=0) - pd.DateOffset(months=1)))
+                elif timeframe == "3Month":
+                    missing.append((symbol, start, min_ts.replace(day=1, hour=0, minute=0, second=0) - pd.DateOffset(months=min_ts.month % 3 + 3)))
+                elif timeframe == "12Month":
+                    missing.append((symbol, start, min_ts.replace(month=1, day=1, hour=0, minute=0, second=0) - pd.DateOffset(years=1)))
             # Missing block at the end?
             if end > max_ts:
                 missing.append((symbol, max_ts + pd.Timedelta(minutes=1), end))
 
         return missing
-
+    '''
+    '''
+    def get_data_bounds(self, symbols: Union[str, List[str]], tf: str) -> List[Tuple[str, Optional[pd.Timestamp], Optional[pd.Timestamp]]]:
+        # Returns the date range for each symbol. 
+        # Input timeframe in format '1Day', '1Week', '1Month' etc. (str of TimeFrame enum)
+        # Output format: 
+        #   List of tuples (symbol, timestamp of the first candle, timestamp of the last candle). 
+        #   All timestamps are in EST timezone.
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        #if not any(sub in tf for sub in ['Day', 'Week', 'Month']):
+        #    print(f"Warning: get_data_bounds is only for D, W, M TFs. Timeframe provided:{tf}")
+        min_ts = None
+        max_ts = None
+        cur = self.conn.cursor()
+        output = []
+        for symbol in symbols:
+            cur.execute(
+                "SELECT MIN(timestamp), MAX(timestamp) FROM candles WHERE symbol=? AND timeframe=?",
+                (symbol, tf)
+            )
+            min_ts, max_ts = cur.fetchone()
+            output.append((symbol, 
+                           pd.to_datetime(min_ts, unit='s').tz_localize('UTC').tz_convert('America/New_York') if min_ts else None, 
+                           pd.to_datetime(max_ts, unit='s').tz_localize('UTC').tz_convert('America/New_York') if max_ts else None))
+        return output
+    
     def _fetch_from_alpaca(self, request_params):
         """
         Retry wrapper for Alpaca fetch calls.
@@ -261,7 +329,7 @@ class ChartDB:
                 else:
                     print(f"[ChartDB] Error: {e} – retrying in 60s ({self.MAX_RETRIES - attempts}/{self.MAX_RETRIES})")
                     time.sleep(60)
-
+    '''
     # --------------------------------------------------------
     # Maintenance utilities
     # --------------------------------------------------------
@@ -298,6 +366,8 @@ class ChartDB:
             return
         print(f"Summary for {symbol}:")
         for timeframe, start, end, count in rows:
+            start = pd.to_datetime(start, unit='s').tz_localize('UTC').tz_convert('America/New_York')
+            end = pd.to_datetime(end, unit='s').tz_localize('UTC').tz_convert('America/New_York')
             print(f"  {timeframe}: {start} → {end} ({count} candles)")
 
     # ----------------------------------------
@@ -310,11 +380,11 @@ class ChartDB:
 # TEST MAIN (runs only if you execute chartDB.py directly)
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    db = ChartDB("test_chartDB.db")
+    db = ChartDB("chartDB_test.db")
     db.delete_all()
 
     # Make some fake data for two symbols
-    idx = pd.date_range("2025-07-30 09:30", periods=3, freq="1min")
+    idx = pd.date_range("2025-07-30 09:30", periods=3, freq="1min", tz="America/New_York")
     df_aapl = pd.DataFrame({
         "open": [195, 196, 197],
         "high": [196, 197, 198],
@@ -332,19 +402,36 @@ if __name__ == "__main__":
     df_msft["volume"] += 500
 
     # Insert for AAPL and MSFT
-    db.insert_candles("1Min", df_aapl)
-    db.insert_candles("1Min", df_msft)
+    db.insert_candles("m1", df_aapl)
+    db.insert_candles("m1", df_msft)
 
     # Query single symbol
     print("\nAAPL:")
-    print(db.get_candles("AAPL", "1Min", idx[0], idx[-1]))
+    print(db.get_candles_by_open_timestamp("AAPL", "m1", idx.tolist()))
 
     # Query multiple symbols
     print("\nAAPL & MSFT:")
-    print(db.get_candles(["AAPL", "MSFT"], "1Min", idx[0], idx[-1]))
+    print(db.get_candles_by_open_timestamp(["AAPL", "MSFT"], "m1", idx.tolist()))
 
     # Print summary
     print("\nSummary:")
     db.summary("AAPL")
 
+    '''
+    bounds = db.get_data_bounds(["AAPL", "MSFT"], "1Day")
+    print("\nData bounds:")
+    for symbol, min_ts, max_ts in bounds:
+        print(f"{symbol}: {min_ts} to {max_ts}")    
+
+    bounds_nonexistent = db.get_data_bounds(["GOOG"], "1Day")
+    print("\nData bounds for nonexistent symbol:")
+    for symbol, min_ts, max_ts in bounds_nonexistent:
+        print(f"{symbol}: {min_ts} to {max_ts}")
+
+    bounds_mixed = db.get_data_bounds(["AAPL", "GOOG"], "1Day")
+    print("\nData bounds for mixed symbols:")
+    for symbol, min_ts, max_ts in bounds_mixed:
+        print(f"{symbol}: {min_ts} to {max_ts}")    
+    '''
+    
     db.close()
