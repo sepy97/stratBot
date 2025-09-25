@@ -46,7 +46,7 @@ class SharedRateLimiter:
                 else:
                     # Need to wait: compute how long until the oldest timestamp expires
                     wait_time = 60 - (now - self.timestamps[0]).total_seconds()
-                    print(f"[{mp.current_process().name}] Rate limit {self.max_requests} hit. Sleeping for {wait_time:.2f} sec.")
+                    print(f"[{mp.current_process().name}] Rate limit {self.max_requests} hit at {time.strftime('%X')}. Sleeping for {wait_time:.2f} sec.")
                     wait_time = max(wait_time, 0.01)  # minimum wait to avoid tight loop
 
             # Outside the lock, wait for the quota to open up
@@ -435,7 +435,7 @@ class DataRetrieval:
         if not bars.empty: # check if we got any bars
             bars_prev = bars.shift(1)
             bars_prev.iat[0, bars_prev.columns.get_loc('high')] = previousHigh
-            bars_prev.iloc[0, bars_prev.columns.get_loc('low')] = previousLow
+            bars_prev.iat[0, bars_prev.columns.get_loc('low')] = previousLow
             convertedData = bars.apply(lambda row: candles.Candle(row.name.timestamp()*1000, row.open, row.high, row.low, row.close, bars_prev.loc[row.name, 'high'].item(), bars_prev.loc[row.name, 'low'].item()), axis=1).to_list()
             return convertedData
         else:   # this should never execute
@@ -482,31 +482,20 @@ class DataRetrieval:
         Hybrid approach:
         - If total rows < max_values_rows -> use VALUES() query
         - Otherwise -> use TEMP TABLE with batched inserts
+
+        Alpaca sets opening of D and higher TF candles to 0:00:00 UTC (and day = 1 for M, Q, Y) regardless of actual market open time. 
+        When fetching Alpaca candles, those timestamps will be converted to actual candle open time 
         """
+        EST = 'America/New_York'
         if timeframe == 'm60':
             raise ValueError("Timeframe 'm60' is not supported in getBarsByOpenTS. Use 'm30' instead and aggregate to hourly TF if needed.")
         symbols = symbol_or_symbols if isinstance(symbol_or_symbols, List) else [symbol_or_symbols]
-        intraday = False
-        if timeframe == 'd':
-            tf = TimeFrame.Day
-        elif timeframe == 'w':
-            tf = TimeFrame.Week
-        elif timeframe == 'm':
-            tf = TimeFrame.Month
-        elif timeframe == 'q':
-            tf = TimeFrame(3, TimeFrameUnit.Month)
-        elif timeframe == 'y':
-            tf = TimeFrame(12, TimeFrameUnit.Month)
-        elif timeframe[0] == 'm' and timeframe[1:].isdigit():
-            intraday = True
-            tf_minute_count = int(timeframe[1:])
-            if tf_minute_count < 60:
-                tf = TimeFrame(tf_minute_count, TimeFrameUnit.Minute)
-            else:
-                tf = TimeFrame(30, TimeFrameUnit.Minute)
-                compositeHourTF = True
-        else:
-            raise ValueError(f"Unsupported timeframe symbol: {timeframe}")
+
+        # Convert open_ts to Alpaca-friendly timestamps for D and higher TFs
+        #if timeframe in ['d', 'w']:
+        #    open_ts = [ts.tz_convert(EST).replace(hour=0, minute=0, second=0) for ts in open_ts]
+        #elif timeframe in ['m', 'q', 'y']:
+        #    open_ts = [ts.tz_convert(EST).replace(day=1, hour=0, minute=0, second=0) for ts in open_ts]
         open_ts = sorted(open_ts)
         missing_dict = {s: [] for s in symbols}
         df_found = self.db.get_candles_by_open_timestamp(
@@ -515,7 +504,7 @@ class DataRetrieval:
             open_ts=open_ts
         )
 
-        # Compute missing timestamps per symbol
+        # Compute missing timestamps per symbol and find the range covering all missing timestamps
         start_ts = None
         end_ts = None
         for sym in symbols:
@@ -531,30 +520,24 @@ class DataRetrieval:
         
         # Fetch missing candles from Alpaca if any
         if start_ts is not None and end_ts is not None: # there are missing candles to fetch
-            fetch_timestamp = pd.Timestamp.now(tz='America/New_York')    # conservative timestamp - if candle closes after this timestamp, assume last fetched candle is live
-            # Fetch missing candles from Alpaca
-            if not intraday:
-                start_ts = start_ts.replace(hour=0, minute=0, second=0) # Alpaca returns next candle is time is not set to 0:00:00 for D and higher TFs                
-            request_params = StockBarsRequest(
-                symbol_or_symbols=symbols,
-                timeframe=tf,
-                start=start_ts,
-                end=end_ts   # even if end_ts is exactly on candle open time, that candle is still returned by Alpaca
-            )
-            df_fetched = self.alpaca_fetch(request_params)
+            fetch_timestamp = pd.Timestamp.now(tz=EST)    # conservative timestamp - if candle closes after this timestamp, assume last fetched candle is live
+            # Fetch missing candles from Alpaca               
+            # Note: end_ts is open timestamp of the last candle we need to fetch. Alpaca returns that candle even if end_ts is exactly on candle open time
+            df_fetched = self.alpaca_fetch(symbols=symbols, timeframe=timeframe, start_ts=start_ts, end_ts=end_ts)  
             # Process fetched DataFrame
             if not df_fetched.empty:
                 if list(df_fetched.index.names) != ['symbol', 'timestamp']:
                     df_fetched = df_fetched.reset_index().set_index(['symbol', 'timestamp'])
 
-                if not intraday:    # TODO: this is a hack due to Alpaca returning 0:00:00 UTC time for D and higher TFs. Need to find a better way
-                    df_fetched.index = pd.MultiIndex.from_arrays(
-                    [df_fetched.index.get_level_values('symbol'), 
-                        df_fetched.index.get_level_values('timestamp').map(lambda x: x.tz_convert(EST).replace(hour=9, minute=30, second=0))], 
-                        names=['symbol', 'timestamp'])
+                #if not intraday:    # TODO: this is a hack due to Alpaca returning 0:00:00 UTC time for D and higher TFs. Need to find a better way
+                #    df_fetched.index = pd.MultiIndex.from_arrays(
+                #    [df_fetched.index.get_level_values('symbol'), 
+                #        df_fetched.index.get_level_values('timestamp').map(lambda x: x.tz_convert(EST).replace(hour=9, minute=30, second=0))], 
+                #        names=['symbol', 'timestamp'])
 
                 if not df_found.empty:
                     df_result = pd.concat([df_found, df_fetched]).sort_index()
+                    df_result = df_result[~df_result.index.duplicated(keep="first")]
                 else:
                     df_result = df_fetched
                 
@@ -571,10 +554,36 @@ class DataRetrieval:
         return df_result
         
     
-    def alpaca_fetch(self, request_params):
+    def alpaca_fetch(self, symbols: List[str], timeframe: str, start_ts: pd.Timestamp, end_ts: pd.Timestamp) -> pd.DataFrame:
         """ Fetches stock bars from Alpaca, handling retries and missing ranges. """
         EST = 'America/New_York'
-        request_counter = self.MAX_REQUESTS        
+        request_counter = self.MAX_REQUESTS
+        intraday = False
+
+        if timeframe == 'd':
+            tf = TimeFrame.Day
+        elif timeframe == 'w':
+            tf = TimeFrame.Week
+        elif timeframe == 'm':
+            tf = TimeFrame.Month
+        elif timeframe == 'q':
+            tf = TimeFrame(3, TimeFrameUnit.Month)
+        elif timeframe == 'y':
+            tf = TimeFrame(12, TimeFrameUnit.Month)
+        elif timeframe[0] == 'm' and timeframe[1:].isdigit():
+            intraday = True
+            tf_minute_count = int(timeframe[1:])
+            tf = TimeFrame(tf_minute_count, TimeFrameUnit.Minute)
+        else:
+            raise ValueError(f"Unsupported timeframe symbol: {timeframe}")
+        if not intraday:
+            start_ts = start_ts.replace(hour=0, minute=0, second=0) # Alpaca returns next candle if time is not set to 0:00:00 for D and higher TFs 
+        request_params = StockBarsRequest(
+            symbol_or_symbols=symbols,
+            timeframe=tf,
+            start=start_ts,
+            end=end_ts   # even if end_ts is exactly on candle open time, that candle is still returned by Alpaca
+        )        
         while request_counter > 0:
             try:
                 if not self.rate_limiter is None:
@@ -591,8 +600,33 @@ class DataRetrieval:
                     print(f"Error retrieving bars. Error: {e} - retrying in 1min... ({5 - request_counter}/5)")
                 time.sleep(60)
         bars = bars.df
-        return bars
+        # For intraday, Alpaca includes candles outside of market hours, so we need to remove those
+        if intraday:
+            day_count = int((end_ts.timestamp() - start_ts.timestamp())/(24*60*60)) + 3    # to ensure we include partial days corresponding to start and end timestamps. #TODO: how many days to add?
+            candle_ranges = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=end_ts.timestamp()+24*60*60, timeframe_sym='d', n_pre=day_count, n_post=0)
+            candle_ranges = candle_ranges['pre'] 
+            bars = bars[bars.index.get_level_values('timestamp').to_series().apply(lambda ts: any(start_dt <= ts < end_dt for start_dt, end_dt in candle_ranges)).values]
+            bars.index = bars.index.remove_unused_levels()
+        # Update timestamps (specifically for D and higher TFs). Alpaca sets opening of D and higher TF candles to 0:00:00 UTC (and day = 1 for M, Q, Y) regardless of actual market open time.
+        bars.index = bars.index.set_levels(bars.index.get_level_values("timestamp").unique().map(lambda ts: self.getProperCandleOpen(timeframe, ts)), level="timestamp")
 
+        return bars
+    
+    def getProperCandleOpen(self, timeframe_symbol: str, timestamp: pd.Timestamp) -> pd.Timestamp:
+        """
+        Given a timeframe symbol and a timestamp reported by Alpaca, return the proper candle open time for that timeframe.
+        Implementation details:
+        - For intraday timeframes, Alpaca always reports the correct candle open time
+        - For D and higher timeframes, Alpaca reports candle open time as 0:00:00 UTC of the day (and day=1 for M, Q, Y) regardless of actual market open time
+        - Therefore, for D and higher timeframes, we need to use MarketTimeManager to find the open time of the next candle after the reported timestamp
+        """
+        timestamp_dict = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=timestamp.timestamp(), timeframe_sym=timeframe_symbol, n_pre=0, n_post=1)
+        if not timestamp_dict['current'] is None:
+            return timestamp_dict['current'][0]
+        else:
+            return timestamp_dict['post'][0][0]
+        
+        
 # -------------------------------
 # Sample Worker Function
 # -------------------------------
@@ -613,8 +647,8 @@ if __name__ == "__main__":
     #session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     time_manager = mtm.MarketTimeManager()
     #session = DataRetrieval(market_time_manager=time_manager)
-    startDay = pd.to_datetime("2025-08-05 10:15:00").tz_localize(EST)
-    endDay = pd.to_datetime("2025-08-05 10:37:00").tz_localize(EST)
+    startDay = pd.to_datetime("2025-09-20 10:15:00").tz_localize(EST)
+    endDay = pd.to_datetime("2025-09-23 9:58:00").tz_localize(EST)
     print(f"Requesting data from {startDay} to {endDay}")
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
     #watchlist = watchlist[0].to_list()
@@ -655,9 +689,9 @@ if __name__ == "__main__":
 
     #os.remove(file_path)
     dr = DataRetrieval(rate_limiter=None, market_time_manager=time_manager, db_path="chartDB_test.db")
-    chart_no_limit = dr.getChart(symbol_list=symbols, timeframe_sym='m5', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    chart_no_limit = dr.getChart(symbol_list=symbols, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
 
-    print('5min chart from DataRetrieval with no rate limit: ')
+    print('Hourly chart from DataRetrieval with no rate limit: ')
     for ticker in chart_no_limit.keys():
         print('Symbol: ' + ticker)
         for candle in chart_no_limit[ticker]:
@@ -667,11 +701,11 @@ if __name__ == "__main__":
     dr.db.summary("AAPL")
     print("\n")
 
-    print("Adding 1 day and 5min")
-    startDay = startDay + pd.Timedelta(days=1, minutes=5)
-    endDay = endDay + pd.Timedelta(days=1, minutes=5)
-    chart_no_limit = dr.getChart(symbol_list=symbols, timeframe_sym='m5', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
-    print('5min chart from DataRetrieval with no rate limit with extra 5min in the end: ')
+    print("Adding 5min")
+    startDay = startDay + pd.Timedelta(minutes=5)
+    endDay = endDay + pd.Timedelta(minutes=5)
+    chart_no_limit = dr.getChart(symbol_list=symbols, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    print('Hourly chart from DataRetrieval with no rate limit with extra 5min in the end: ')
     for ticker in chart_no_limit.keys():
         print('Symbol: ' + ticker)
         for candle in chart_no_limit[ticker]:
