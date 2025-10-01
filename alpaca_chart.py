@@ -431,7 +431,7 @@ class DataRetrieval:
         return barsDataFrame_HTF
 
     # This function converts BarSet returned by get_stock_bars into a list of Candles instances
-    def convertBarsToCandleList(sefl, bars, previousHigh, previousLow):
+    def convertBarsToCandleList(self, bars, previousHigh, previousLow):
         if not bars.empty: # check if we got any bars
             bars_prev = bars.shift(1)
             bars_prev.iat[0, bars_prev.columns.get_loc('high')] = previousHigh
@@ -498,78 +498,92 @@ class DataRetrieval:
         #    open_ts = [ts.tz_convert(EST).replace(day=1, hour=0, minute=0, second=0) for ts in open_ts]
         open_ts = sorted(open_ts)
         missing_dict = {s: [] for s in symbols}
-        df_found = self.db.get_candles_by_open_timestamp(
-            symbol_or_symbols=symbols, 
-            timeframe=timeframe, 
-            open_ts=open_ts
-        )
+        try:
+            df_found = self.db.get_candles_by_open_timestamp(
+                symbol_or_symbols=symbols, 
+                timeframe=timeframe, 
+                open_ts=open_ts
+            )
 
-        # Compute missing timestamps per symbol and find the range covering all missing timestamps
-        start_ts = None
-        end_ts = None
-        for sym in symbols:
-            if df_found.empty or sym not in df_found.index.levels[0]:
-                missing_dict[sym] = open_ts
-            else:
-                present_ts = set(df_found.loc[sym].index)
-                missing_dict[sym] = [ts for ts in open_ts if ts not in present_ts]
-            start_ts_sym = min(missing_dict[sym]) if missing_dict[sym] else None
-            start_ts = start_ts_sym if start_ts is None else min(start_ts, start_ts_sym) if start_ts_sym is not None else start_ts
-            end_ts_sym = max(missing_dict[sym]) if missing_dict[sym] else None
-            end_ts = end_ts_sym if end_ts is None else max(end_ts, end_ts_sym) if end_ts_sym is not None else end_ts
-        
-        # Fetch missing candles from Alpaca if any
-        if start_ts is not None and end_ts is not None: # there are missing candles to fetch
-            fetch_timestamp = pd.Timestamp.now(tz=EST)    # conservative timestamp - if candle closes after this timestamp, assume last fetched candle is live
-            # Fetch missing candles from Alpaca               
-            # Note: end_ts is open timestamp of the last candle we need to fetch. Alpaca returns that candle even if end_ts is exactly on candle open time
-            df_fetched = self.alpaca_fetch(symbols=symbols, timeframe=timeframe, start_ts=start_ts, end_ts=end_ts)  
-            # Process fetched DataFrame
-            if not df_fetched.empty:
-                if list(df_fetched.index.names) != ['symbol', 'timestamp']:
-                    df_fetched = df_fetched.reset_index().set_index(['symbol', 'timestamp'])
-
-                #if not intraday:    # TODO: this is a hack due to Alpaca returning 0:00:00 UTC time for D and higher TFs. Need to find a better way
-                #    df_fetched.index = pd.MultiIndex.from_arrays(
-                #    [df_fetched.index.get_level_values('symbol'), 
-                #        df_fetched.index.get_level_values('timestamp').map(lambda x: x.tz_convert(EST).replace(hour=9, minute=30, second=0))], 
-                #        names=['symbol', 'timestamp'])
-
-                if not df_found.empty:
-                    df_result = pd.concat([df_found, df_fetched]).sort_index()
-                    df_result = df_result[~df_result.index.duplicated(keep="first")]
+            # Compute missing timestamps per symbol and find the range covering all missing timestamps
+            start_ts = None
+            end_ts = None
+            for sym in symbols:
+                if df_found.empty or sym not in df_found.index.levels[0]:
+                    missing_dict[sym] = open_ts
                 else:
-                    df_result = df_fetched
-                
-                # Remove live candle if present from what was fetched and insert fetched candles into DB
-                last_fetched_candle = self.market_time_manager.getCandleOpenCloseTime(timestamp_s = end_ts.timestamp(), timeframe_sym=timeframe, n_pre=0, n_post=0)
-                if last_fetched_candle['current'] and last_fetched_candle['current'][1] > fetch_timestamp:
-                    df_fetched = df_fetched[df_fetched.index.get_level_values('timestamp') < last_fetched_candle['current'][0]]         
-                self.db.insert_candles(timeframe, df_fetched)
+                    present_ts = set(df_found.loc[sym].index)
+                    missing_dict[sym] = [ts for ts in open_ts if ts not in present_ts]
+                start_ts_sym = min(missing_dict[sym]) if missing_dict[sym] else None
+                start_ts = start_ts_sym if start_ts is None else min(start_ts, start_ts_sym) if start_ts_sym is not None else start_ts
+                end_ts_sym = max(missing_dict[sym]) if missing_dict[sym] else None
+                end_ts = end_ts_sym if end_ts is None else max(end_ts, end_ts_sym) if end_ts_sym is not None else end_ts
+            
+            # Fetch missing candles from Alpaca if any
+            if start_ts is not None and end_ts is not None: # there are missing candles to fetch
+                fetch_timestamp = pd.Timestamp.now(tz=EST)    # conservative timestamp - if candle closes after this timestamp, assume last fetched candle is live
+                # Fetch missing candles from Alpaca               
+                # Note: end_ts is open timestamp of the last candle we need to fetch. Alpaca returns that candle even if end_ts is exactly on candle open time
+                df_fetched = self.alpaca_fetch(symbols=symbols, timeframe=timeframe, start_ts=start_ts, end_ts=end_ts)  
+                # Process fetched DataFrame
+                if not df_fetched.empty:
+                    if list(df_fetched.index.names) != ['symbol', 'timestamp']:
+                        df_fetched = df_fetched.reset_index().set_index(['symbol', 'timestamp'])
+
+                    #if not intraday:    # TODO: this is a hack due to Alpaca returning 0:00:00 UTC time for D and higher TFs. Need to find a better way
+                    #    df_fetched.index = pd.MultiIndex.from_arrays(
+                    #    [df_fetched.index.get_level_values('symbol'), 
+                    #        df_fetched.index.get_level_values('timestamp').map(lambda x: x.tz_convert(EST).replace(hour=9, minute=30, second=0))], 
+                    #        names=['symbol', 'timestamp'])
+
+                    if not df_found.empty:
+                        df_result = pd.concat([df_found, df_fetched]).sort_index()
+                        df_result = df_result[~df_result.index.duplicated(keep="first")]
+                    else:
+                        df_result = df_fetched
+                    
+                    # Remove live candle if present from what was fetched and insert fetched candles into DB
+                    last_fetched_candle = self.market_time_manager.getCandleOpenCloseTime(timestamp_s = end_ts.timestamp(), timeframe_sym=timeframe, n_pre=0, n_post=0)
+                    if last_fetched_candle['current'] and last_fetched_candle['current'][1] > fetch_timestamp:
+                        df_fetched = df_fetched[df_fetched.index.get_level_values('timestamp') < last_fetched_candle['current'][0]]         
+                    self.db.insert_candles(timeframe, df_fetched)
+                else:
+                    df_result = df_found
             else:
                 df_result = df_found
-        else:
-            df_result = df_found
-        
+        except Exception as e:
+            print(f"Error retrieving bars. Error: {e}")
+            raise e
         return df_result
         
     
     def alpaca_fetch(self, symbols: List[str], timeframe: str, start_ts: pd.Timestamp, end_ts: pd.Timestamp) -> pd.DataFrame:
-        """ Fetches stock bars from Alpaca, handling retries and missing ranges. """
+        """ Fetches stock bars from Alpaca, handling retries and missing ranges. 
+        First candle is the one that contains start_ts (opens at start_ts or opens before and closes after start_ts); if start_ts is outside of candle, then candle immediately after start_ts is returned 
+        Last candle is the one that either contains end_ts (opens at end_ts or opens before and closes after end_ts). If end_ts is outside of candle, then candle immediately before end_ts is returned.
+        Main use case is in conjunction with getBarsByOpenTS where start_ts and end_ts are open timestamps of the first and the last candles to fetch respectively.
+        """
         EST = 'America/New_York'
         request_counter = self.MAX_REQUESTS
         intraday = False
 
         if timeframe == 'd':
             tf = TimeFrame.Day
+            start_ts = start_ts.replace(hour=0, minute=0, second=0) # Alpaca returns next candle if time is not set to 0:00:00 for D and higher TFs 
         elif timeframe == 'w':
             tf = TimeFrame.Week
+            start_ts = start_ts-pd.Timedelta(days=start_ts.weekday())
+            start_ts = start_ts.replace(hour=0, minute=0, second=0)
         elif timeframe == 'm':
             tf = TimeFrame.Month
+            start_ts = start_ts.replace(day=1, hour=0, minute=0, second=0)
         elif timeframe == 'q':
             tf = TimeFrame(3, TimeFrameUnit.Month)
+            quarterStartMonth = 3*((start_ts.month-1)//3)+1
+            start_ts = start_ts.replace(month=quarterStartMonth, day=1, hour=0, minute=0, second=0) 
         elif timeframe == 'y':
             tf = TimeFrame(12, TimeFrameUnit.Month)
+            start_ts = start_ts.replace(month=1, day=1, hour=0, minute=0, second=0)
         elif timeframe[0] == 'm' and timeframe[1:].isdigit():
             intraday = True
             tf_minute_count = int(timeframe[1:])
@@ -600,15 +614,26 @@ class DataRetrieval:
                     print(f"Error retrieving bars. Error: {e} - retrying in 1min... ({5 - request_counter}/5)")
                 time.sleep(60)
         bars = bars.df
+        if bars.empty:
+            print(f"Warning: no bars returned from Alpaca, symbol(s): {symbols}, timeframe: {timeframe}, start: {start_ts}, end: {end_ts}")
+            return bars
         # For intraday, Alpaca includes candles outside of market hours, so we need to remove those
         if intraday:
-            day_count = int((end_ts.timestamp() - start_ts.timestamp())/(24*60*60)) + 3    # to ensure we include partial days corresponding to start and end timestamps. #TODO: how many days to add?
-            candle_ranges = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=end_ts.timestamp()+24*60*60, timeframe_sym='d', n_pre=day_count, n_post=0)
-            candle_ranges = candle_ranges['pre'] 
-            bars = bars[bars.index.get_level_values('timestamp').to_series().apply(lambda ts: any(start_dt <= ts < end_dt for start_dt, end_dt in candle_ranges)).values]
-            bars.index = bars.index.remove_unused_levels()
+            try:
+                day_count = int((end_ts.timestamp() - start_ts.timestamp())/(24*60*60)) + 3    # to ensure we include partial days corresponding to start and end timestamps. #TODO: how many days to add?
+                candle_ranges = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=end_ts.timestamp()+24*60*60, timeframe_sym='d', n_pre=day_count, n_post=0)
+                candle_ranges = candle_ranges['pre'] 
+                bars = bars[bars.index.get_level_values('timestamp').to_series().apply(lambda ts: any(start_dt <= ts < end_dt for start_dt, end_dt in candle_ranges)).values]
+                bars.index = bars.index.remove_unused_levels()
+            except Exception as e:
+                print(f"Error dropping candles outside of market hours. Error: {e}")
+                raise e
         # Update timestamps (specifically for D and higher TFs). Alpaca sets opening of D and higher TF candles to 0:00:00 UTC (and day = 1 for M, Q, Y) regardless of actual market open time.
-        bars.index = bars.index.set_levels(bars.index.get_level_values("timestamp").unique().map(lambda ts: self.getProperCandleOpen(timeframe, ts)), level="timestamp")
+        try:
+            bars.index = bars.index.set_levels(bars.index.get_level_values("timestamp").unique().map(lambda ts: self.getProperCandleOpen(timeframe, ts)), level="timestamp")
+        except Exception as e:
+            print(f"Error updating candle open timestamps. Error: {e}")
+            raise e
 
         return bars
     

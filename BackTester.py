@@ -1,5 +1,5 @@
 from datetime import datetime
-from alpaca_chart import DataRetrieval
+from alpaca_chart import DataRetrieval, SharedRateLimiter
 import util
 import pandas as pd
 import MarketTimeManager
@@ -11,6 +11,11 @@ from functools import partial
 from earnings_calendar import EarningsCalendar
 import time
 import candles
+
+shared_limiter = None  # Global variable to hold the shared rate limiter instance
+def init_pool(limiter):
+    global shared_limiter
+    shared_limiter = limiter  # Assign the shared rate limiter to the global variable
 
 # TODO: This may or may be needed. Commenting out for now
 #def isAS(candle1, candle2, direction):
@@ -339,8 +344,8 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
         chartDictNew['y'][-1].close = dayCandleToAdd.close
     return chartDictNew
 
-def backtest_symbol(dailyChart, chartDict, symbol, er_list, strategy, rate_limiter):
-    session = DataRetrieval(market_time_manager=session.market_time_manager, rate_limiter=rate_limiter)  # Recreate session to avoid issues with multiprocessing
+def backtest_symbol(dailyChart, chartDict, symbol, market_time_manager, er_list, strategy):
+    session = DataRetrieval(rate_limiter=shared_limiter, market_time_manager=market_time_manager)  # Recreate session to avoid issues with multiprocessing
     trades = []
     lastDay = pd.to_datetime(dailyChart[1].open_ts, unit='s')
     for day_id in range(2, len(dailyChart)):
@@ -426,10 +431,18 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     dailyChart_candles = [dailyChart[symbol] for symbol in symbol_valid]
     chartDict_candles = [chartDict[symbol] for symbol in symbol_valid]
     er_per_symbol = [er.get_ER_by_ticker(symbol) for symbol in symbol_valid]
+    er_dict = {symbol: er.get_ER_by_ticker(symbol) for symbol in symbol_valid}
     # Start backtesting for each symbol in parallel
     start_time = time.perf_counter()
-    with mp.Pool() as pool:
-        total_result = pool.starmap(partial(backtest_symbol, session=session, strategy=strategy), zip(dailyChart_candles, chartDict_candles, symbol_valid, er_per_symbol))
+    with mp.Manager() as manager:
+        limiter = SharedRateLimiter(manager)
+
+        with mp.Pool(processes=4, initializer=init_pool, initargs=(limiter,)) as pool:
+            total_result = pool.starmap(backtest_symbol, 
+                            [(dailyChart[symbol], chartDict[symbol], symbol, mtm, er_dict[symbol], strategy) for symbol in symbol_valid]
+                        )  
+    #with mp.Pool() as pool:
+    #    total_result = pool.starmap(partial(backtest_symbol, session=session, strategy=strategy), zip(dailyChart_candles, chartDict_candles, symbol_valid, er_per_symbol))
     end_time = time.perf_counter()
     print(f"Backtesting completed in {end_time - start_time:.2f} seconds")
     all_trades = {}
@@ -478,7 +491,7 @@ if __name__ == "__main__":
     startDay_str = "2025-05-01 0:30:00"
     endDay_str = "2025-07-31 23:30:00"
     timezone = 'America/Los_Angeles'
-    earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_blank.csv'
+    earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_2025-05-18.csv'
     watchlist_name = 'NASDAQ100_2025'
     strategy_name = "BasicDailyAS"
     runBacktest(
