@@ -23,11 +23,15 @@ def log_init(log_file="strat_bot.log") -> tuple[mp.Queue, logging.handlers.Queue
     file_handler.setFormatter(formatter)
     
     # --- 4. Set up a listener that uses both handlers ---
-    listener = logging.handlers.QueueListener(log_queue, console_handler, file_handler)
+    listener = logging.handlers.QueueListener(log_queue, 
+                                              console_handler, 
+                                              file_handler, 
+                                              respect_handler_level=True)
 
     # --- 5. Configure root logger to send logs into the queue ---
     queue_handler = logging.handlers.QueueHandler(log_queue)
     root_logger = logging.getLogger()
+    root_logger.handlers = []  # Remove all other handlers
     root_logger.setLevel(logging.DEBUG)  # global minimum threshold
     root_logger.addHandler(queue_handler)
 
@@ -58,10 +62,15 @@ def _worker(symbol):
 if __name__ == "__main__":
     log_queue, listener = log_init("test_log.log")
     listener.start()
+    for h in logging.getLogger().handlers:
+        print(h, h.level)
     logger = logging.getLogger(__name__)
     logger.info("Main process starting")
+    logger.debug("Debug message from main process")
     symbol_valid = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']
     with mp.Pool(processes=4, initializer=_init_pool, initargs=(log_queue, )) as pool:
             total_result = pool.starmap(_worker, [(sym, ) for sym in symbol_valid])  
-
+    sleep(1)
+    logger.info("Main process finished")
+    logger.debug("Debug message from main process before stopping listener")
     listener.stop()
