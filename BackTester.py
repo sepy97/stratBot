@@ -11,11 +11,14 @@ from functools import partial
 from earnings_calendar import EarningsCalendar
 import time
 import candles
+import log_functions
+import logging
 
 shared_limiter = None  # Global variable to hold the shared rate limiter instance
-def init_pool(limiter):
+def init_pool(limiter, log_queue):
     global shared_limiter
     shared_limiter = limiter  # Assign the shared rate limiter to the global variable
+    log_functions.subprocess_init(log_queue)
 
 # TODO: This may or may be needed. Commenting out for now
 #def isAS(candle1, candle2, direction):
@@ -390,11 +393,15 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     test_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
     tradeLogFileName = "./Trades/trades_" + startDay_str.split(' ')[0].replace('-', '') + "_" + endDay_str.split(' ')[0].replace('-', '') + "_" + watchlist_name + "_" + strategy_name + "_" + test_timestamp + ".csv"
     os.makedirs('./Trades/', exist_ok=True)
-    trades = []
+    log_queue, log_listener = log_functions.log_init()
+    log_listener.start()
+    logger = logging.getLogger(__name__)
+    logger.info("Main process starting")
     mtm = MarketTimeManager.MarketTimeManager()
     session = DataRetrieval(market_time_manager=mtm)
     strategy = bts(strategy_name)
     er = EarningsCalendar(earnings_file)
+
 
     # Currently testing only Daily and higher TF strategy, so we simply truncate startDay to the beginning of the day and endDay to the end of the day
     startDay = pd.to_datetime(startDay_str).tz_localize(timezone).replace(hour=6, minute=30, second=0)
@@ -437,7 +444,7 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     with mp.Manager() as manager:
         limiter = SharedRateLimiter(manager)
 
-        with mp.Pool(processes=4, initializer=init_pool, initargs=(limiter,)) as pool:
+        with mp.Pool(processes=4, initializer=init_pool, initargs=(limiter, log_queue)) as pool:
             total_result = pool.starmap(backtest_symbol, 
                             [(dailyChart[symbol], chartDict[symbol], symbol, mtm, er_dict[symbol], strategy) for symbol in symbol_valid]
                         )  
@@ -476,7 +483,7 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     printTradeDict(all_trades, tradeLogFileName)
     print(f'Trade details logged in {tradeLogFileName}')
     print('====================')
-
+    log_listener.stop()
    
 # Backtesting with limited number of queries for candle bars
 # Assume that strategy is relying on D and higher TF
