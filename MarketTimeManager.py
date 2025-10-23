@@ -6,9 +6,11 @@ from alpaca.trading.requests import GetCalendarRequest
 from alpaca_config import alpaca_config
 import pytz
 from typing import List, Tuple, Dict, Any
+import logging
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT
+logger = logging.getLogger(__name__)
 SUPPORTED_TIMEFRAMES = ['y', 'q', 'm', 'w', 'd', 'm60', 'm30', 'm15', 'm5', 'm1']
 timeframe_LUT = {'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
 class MarketTimeManager:
@@ -205,7 +207,7 @@ class MarketTimeManager:
         tz = pytz.timezone('America/New_York')
         timestampDate = pd.to_datetime(timestamp_s, unit='s', utc=True).tz_convert('America/New_York')     # convert to Panda Datetime and ensure it is timezone-aware and in NY timezone
         if timestampDate.date() < self.calendar.index[0] or timestampDate.date() > self.calendar.index[-1]:  # timestamp is outside of the calendar range
-            print(f"Timestamp {timestampDate} is outside of the calendar range")
+            logger.error(f"Timestamp {timestampDate} is outside of the calendar range")
             return candleOpenCloseTime
         if timeframe_sym in ['m60', 'm30', 'm15', 'm5', 'm1']:
             period_s = int(timeframe_sym[1:])*60
@@ -465,7 +467,7 @@ class MarketTimeManager:
         if start_time >= end_time:
             raise ValueError("start_time must be earlier than end_time")
         if start_time.date() < self.calendar.index[0] or end_time.date() > self.calendar.index[-1]:  # timestamp is outside of the calendar range
-            print(f"Start time {start_time} or end time {end_time} is outside of the calendar range")
+            logger.error(f"Start time {start_time} or end time {end_time} is outside of the calendar range")
             return []
         if timeframe in ['m60', 'm30', 'm15', 'm5', 'm1']:
             period_s = int(timeframe[1:])*60

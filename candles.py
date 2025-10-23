@@ -1,4 +1,7 @@
 import pandas as pd
+import logging
+logger = logging.getLogger(__name__)
+
 class Candle:
     # Financial candle
     def __init__(self, timestamp_ms, open, high, low, close, prev_high, prev_low, close_ts=None):
@@ -64,13 +67,13 @@ class Candle:
             '''
             return "2"
         else:
-            print ("Error: Candle doesn't fit any kind!")
+            logger.error(f"Error: Candle doesn't fit any kind! High: {self.high}, Low: {self.low}, Prev High: {self.previous_high}, Prev Low: {self.previous_low}")
             return "X"
     
     def get_direction(self):
         # Return candle direction
         if (self.open is None) or (self.close is None):
-            print ("Error: Candle has no direction!")
+            logger.error("Error: Candle has no direction!")
             return "X"
         elif self.open <= self.close:
             return "G"
@@ -85,7 +88,7 @@ class Candle:
             elif self.low < self.previous_low:
                 return "D"
             else:
-                print ("Error: Candle is 2 but has no direction!")
+                logger.error("Error: Candle is 2 but has no direction!")
                 return "E"
         else:
             return ""

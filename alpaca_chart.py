@@ -14,8 +14,11 @@ from multiprocessing import Manager, Lock
 from functools import partial
 from typing import Optional, Callable, List, Tuple, Union, Dict
 from itertools import product
+import logging
 
 shared_limiter = None  # Global variable to hold the shared rate limiter instance
+logger = logging.getLogger(__name__)
+
 def init_pool(limiter):
     global shared_limiter
     shared_limiter = limiter  # Assign the shared rate limiter to the global variable
@@ -41,12 +44,12 @@ class SharedRateLimiter:
 
                 if len(self.timestamps) < self.max_requests:
                     self.timestamps.append(now)
-                    print(f"[{mp.current_process().name}] Request allowed at {time.strftime('%X')}")
+                    logger.debug(f"[{mp.current_process().name}] Request allowed at {time.strftime('%X')}")
                     return  # Let the caller proceed
                 else:
                     # Need to wait: compute how long until the oldest timestamp expires
                     wait_time = 60 - (now - self.timestamps[0]).total_seconds()
-                    print(f"[{mp.current_process().name}] Rate limit {self.max_requests} hit at {time.strftime('%X')}. Sleeping for {wait_time:.2f} sec.")
+                    logger.debug(f"[{mp.current_process().name}] Rate limit {self.max_requests} hit at {time.strftime('%X')}. Sleeping for {wait_time:.2f} sec.")
                     wait_time = max(wait_time, 0.01)  # minimum wait to avoid tight loop
 
             # Outside the lock, wait for the quota to open up
@@ -373,7 +376,7 @@ class DataRetrieval:
             for sym in symbol_list:
                 bars_sym = bars.xs(sym, level='symbol')
                 if bars_sym.index[0].date() > start_time_query.date():   # This mean we don't have enough history, do not discard the first candle
-                    print(f"Warning: no candle opening at {start_time_query} returned for {sym}")
+                    logger.warning(f"Warning: no candle opening at {start_time_query} returned for {sym}")
                     previousCandleHigh = None
                     previousCandleLow = None
                     firstCandleToReport = 0
@@ -488,6 +491,7 @@ class DataRetrieval:
         """
         EST = 'America/New_York'
         if timeframe == 'm60':
+            logger.error("Timeframe 'm60' is not supported in getBarsByOpenTS. Use 'm30' instead and aggregate to hourly TF if needed.")
             raise ValueError("Timeframe 'm60' is not supported in getBarsByOpenTS. Use 'm30' instead and aggregate to hourly TF if needed.")
         symbols = symbol_or_symbols if isinstance(symbol_or_symbols, List) else [symbol_or_symbols]
 
@@ -552,7 +556,7 @@ class DataRetrieval:
             else:
                 df_result = df_found
         except Exception as e:
-            print(f"Error retrieving bars. Error: {e}")
+            logger.error(f"Error retrieving bars. Error: {e}")
             raise e
         return df_result
         
@@ -589,6 +593,7 @@ class DataRetrieval:
             tf_minute_count = int(timeframe[1:])
             tf = TimeFrame(tf_minute_count, TimeFrameUnit.Minute)
         else:
+            logger.error(f"Unsupported timeframe symbol: {timeframe}")
             raise ValueError(f"Unsupported timeframe symbol: {timeframe}")
         if not intraday:
             start_ts = start_ts.replace(hour=0, minute=0, second=0) # Alpaca returns next candle if time is not set to 0:00:00 for D and higher TFs 
@@ -602,20 +607,20 @@ class DataRetrieval:
             try:
                 if not self.rate_limiter is None:
                     self.rate_limiter.acquire()  # Wait for rate limit slot
-                print(f"Fetching bars for {request_params.symbol_or_symbols} from {request_params.start.tz_localize('UTC').tz_convert(EST)} to {request_params.end.tz_localize('UTC').tz_convert(EST)} with timeframe {request_params.timeframe}")
+                logger.debug(f"Fetching bars for {request_params.symbol_or_symbols} from {request_params.start.tz_localize('UTC').tz_convert(EST)} to {request_params.end.tz_localize('UTC').tz_convert(EST)} with timeframe {request_params.timeframe}")
                 bars = self.session.get_stock_bars(request_params)
                 break
             except Exception as e:
                 request_counter -= 1
                 if request_counter == 0:
-                    print(f"Error retrieving bars. Error: {e} - giving up after {self.MAX_REQUESTS} attempts.")
+                    logger.error(f"Error retrieving bars. Error: {e} - giving up after {self.MAX_REQUESTS} attempts.")
                     raise e
                 else:
-                    print(f"Error retrieving bars. Error: {e} - retrying in 1min... ({5 - request_counter}/5)")
+                    logger.info(f"Error retrieving bars. Error: {e} - retrying in 1min... ({5 - request_counter}/5)")
                 time.sleep(60)
         bars = bars.df
         if bars.empty:
-            print(f"Warning: no bars returned from Alpaca, symbol(s): {symbols}, timeframe: {timeframe}, start: {start_ts}, end: {end_ts}")
+            logger.warning(f"Warning: no bars returned from Alpaca, symbol(s): {symbols}, timeframe: {timeframe}, start: {start_ts}, end: {end_ts}")
             return bars
         # For intraday, Alpaca includes candles outside of market hours, so we need to remove those
         if intraday:
@@ -626,13 +631,13 @@ class DataRetrieval:
                 bars = bars[bars.index.get_level_values('timestamp').to_series().apply(lambda ts: any(start_dt <= ts < end_dt for start_dt, end_dt in candle_ranges)).values]
                 bars.index = bars.index.remove_unused_levels()
             except Exception as e:
-                print(f"Error dropping candles outside of market hours. Error: {e}")
+                logger.error(f"Error dropping candles outside of market hours. Error: {e}")
                 raise e
         # Update timestamps (specifically for D and higher TFs). Alpaca sets opening of D and higher TF candles to 0:00:00 UTC (and day = 1 for M, Q, Y) regardless of actual market open time.
         try:
             bars.index = bars.index.set_levels(bars.index.get_level_values("timestamp").unique().map(lambda ts: self.getProperCandleOpen(timeframe, ts)), level="timestamp")
         except Exception as e:
-            print(f"Error updating candle open timestamps. Error: {e}")
+            logger.error(f"Error updating candle open timestamps. Error: {e}")
             raise e
 
         return bars
@@ -785,3 +790,8 @@ if __name__ == "__main__":
     # see: https://forum.alpaca.markets/t/how-to-get-bars-within-30-mins-time-frame/11613
     
     # DASH open price on March 19 2025 - TV shows 185.23 (intraday), 186 (Daily). 186.27 reported - matches TOS intraday chart
+
+
+    #Warning: Not enough candles in d timeframe to record combo for GOOGL on 2025-05-01 09:30:00-04:00. Reduced combo recording.
+    #Warning: Not enough candles in d timeframe to record combo for FAST on 2025-05-01 09:30:00-04:00. Reduced combo recording.
+    #Warning: Not enough candles in d timeframe to record combo for BKR on 2025-05-01 09:30:00-04:00. Reduced combo recording.

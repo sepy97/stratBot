@@ -15,6 +15,8 @@ import log_functions
 import logging
 
 shared_limiter = None  # Global variable to hold the shared rate limiter instance
+logger = logging.getLogger(__name__)
+
 def init_pool(limiter, log_queue):
     global shared_limiter
     shared_limiter = limiter  # Assign the shared rate limiter to the global variable
@@ -81,7 +83,7 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
         else:
             entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.low < triggerPrice), None)
         if entryID is None:
-            print(f'{sym}: No entry found intraday but expected a {direction.name} entry based on daily chart on {tradeDay[0]}, trigger = {triggerPrice}')
+            logger.warning(f'{sym}: No entry found intraday but expected a {direction.name} entry based on daily chart on {tradeDay[0]}, trigger = {triggerPrice}')
             continue
         entryTimestamp = intradayCandles[entryID].open_ts
         currentTrade = ({'symbol': sym, 
@@ -125,7 +127,7 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
                 )
             # Record candle combo 
             if len(chartDictNew[tf]) < 3:
-                print(f"Warning: Not enough candles in {tf} timeframe to record combo for {sym} on {tradeDay[0]}. Reduced combo recording.")
+                logger.warning(f"Warning: Not enough candles in {tf} timeframe to record combo for {sym} on {tradeDay[0]}. Reduced combo recording.")
                 currentTrade[tf] = chartDictNew[tf][-2].to_string() + "-" + currentCandleDict[tf].to_string()
                 currentTrade[tf + " combo"] = (chartDictNew[tf][-2].get_kind() + chartDictNew[tf][-2].get_subtype() + "-" + 
                                                currentCandleDict[tf].get_kind() + currentCandleDict[tf].get_subtype())
@@ -209,7 +211,7 @@ def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
             else:
                 entryID = next((ii for ii, candle in enumerate(intradayCandles) if (candle.low <= trade['stop'] or candle.high >= trade['target'])), None)
                 if entryID is None:
-                    print(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open')
+                    logger.warning(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open')
                     return
                 if intradayCandles[entryID].low <= trade['stop']:
                     trade['stop type'] = "stop hit"
@@ -225,7 +227,7 @@ def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
             else:
                 entryID = next((ii for ii, candle in enumerate(intradayCandles) if (candle.high >= trade['stop'] or candle.low <= trade['target'])), None)
                 if entryID is None:
-                    print(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open')
+                    logger.warning(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open')
                     return
                 if intradayCandles[entryID].high >= trade['stop']:
                     trade['stop type'] = "stop hit"
@@ -349,12 +351,15 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
 
 def backtest_symbol(dailyChart, chartDict, symbol, market_time_manager, er_list, strategy):
     session = DataRetrieval(rate_limiter=shared_limiter, market_time_manager=market_time_manager)  # Recreate session to avoid issues with multiprocessing
+    
+    logger.info(f"Starting backtest for {symbol}")
     trades = []
     lastDay = pd.to_datetime(dailyChart[1].open_ts, unit='s')
     for day_id in range(2, len(dailyChart)):
         # Update charts
         dayCandleToAdd = dailyChart[day_id]
         dayDateToAdd = pd.to_datetime(dayCandleToAdd.open_ts, unit='s')
+        logger.debug(f"{symbol}: Adding daily candle for {dayDateToAdd.date()}")
         chartDictNew = addDailyCandleToChart(chartDict, lastDay, dayCandleToAdd, dayDateToAdd)
         lastDay = dayDateToAdd
         #with open('chart.txt', 'a') as f:
@@ -383,6 +388,7 @@ def backtest_symbol(dailyChart, chartDict, symbol, market_time_manager, er_list,
     # Log resulting trades
     #for trade in trades:
     #    printTrade(trade)
+    logger.info(f"Completed backtest for {symbol}")
     return trades 
 # Function to run backtest for given watchlist and strategy between startDay and endDay
 # startDay_str and endDay_str are strings in the format "YYYY-MM-DD HH:MM:SS" in PST timezone
@@ -395,8 +401,13 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     os.makedirs('./Trades/', exist_ok=True)
     log_queue, log_listener = log_functions.log_init()
     log_listener.start()
-    logger = logging.getLogger(__name__)
-    logger.info("Main process starting")
+    
+    logger.info(f"""Main process starting. Parameters: 
+                range: {startDay_str} to {endDay_str}
+                watchlist: {wl}
+                strategy: {strategy_name}
+                earnings file: {earnings_file})""")
+    
     mtm = MarketTimeManager.MarketTimeManager()
     session = DataRetrieval(market_time_manager=mtm)
     strategy = bts(strategy_name)
@@ -416,7 +427,7 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     TF_sym_list = ['d', 'w', 'm', 'q', 'y']
     chartByTimeframe = dict.fromkeys(TF_sym_list)
     # Init daily chart (do it separately to save on extra query to Alpaca API). This creates a dictionary {'timeframe = d' --> {'symbol' --> first daily candle}}
-    chartByTimeframe['d'] = {symbol: [dailyChart[symbol][0]] for symbol in dailyChart.keys() if symbol} # extra square brackets are needed to make a list containing a single candle
+    chartByTimeframe['d'] = {symbol: dailyChart[symbol][0:2] for symbol in dailyChart.keys() if symbol} # reminder: [0:2] gets first two candles (inclusive-exclusive range)
     # Initialize all higher TF charts (W and higher). This will generate a dictionary {'timeframe' --> {'symbol' --> [candle list]}}
     # Note: we need an extra candle for each TF to evaluate if there is AS on that TF
     for TF_sym in TF_sym_list[1:]:
@@ -434,24 +445,21 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     symbol_valid = set(dailyChart.keys()) & set(chartDict.keys())
     symbol_invalid = set(dailyChart.keys()) ^ set(chartDict.keys())
     if symbol_invalid:
-        print(f"Symbols in daily chart and higher timeframe charts do not match and will be ignored: {symbol_invalid}")
-    dailyChart_candles = [dailyChart[symbol] for symbol in symbol_valid]
-    chartDict_candles = [chartDict[symbol] for symbol in symbol_valid]
-    er_per_symbol = [er.get_ER_by_ticker(symbol) for symbol in symbol_valid]
+        logger.warning(f"Symbols in daily chart and higher timeframe charts do not match and will be ignored: {symbol_invalid}")
+    
     er_dict = {symbol: er.get_ER_by_ticker(symbol) for symbol in symbol_valid}
     # Start backtesting for each symbol in parallel
     start_time = time.perf_counter()
     with mp.Manager() as manager:
         limiter = SharedRateLimiter(manager)
-
-        with mp.Pool(processes=4, initializer=init_pool, initargs=(limiter, log_queue)) as pool:
+        with mp.Pool(initializer=init_pool, initargs=(limiter, log_queue)) as pool: # remove number of processes from the call
             total_result = pool.starmap(backtest_symbol, 
                             [(dailyChart[symbol], chartDict[symbol], symbol, mtm, er_dict[symbol], strategy) for symbol in symbol_valid]
                         )  
     #with mp.Pool() as pool:
     #    total_result = pool.starmap(partial(backtest_symbol, session=session, strategy=strategy), zip(dailyChart_candles, chartDict_candles, symbol_valid, er_per_symbol))
     end_time = time.perf_counter()
-    print(f"Backtesting completed in {end_time - start_time:.2f} seconds")
+    logger.info(f"Backtesting completed in {end_time - start_time:.2f} seconds")
     all_trades = {}
     gain_summary = {}
     for sublist in total_result:
@@ -473,16 +481,17 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
                 all_trades[trade['symbol']] = [trade]
                 gain_summary[trade['symbol']] = gain
     gain_summary = pd.DataFrame(gain_summary.items(), columns=['symbol', 'gain %'])
-    print('Backtesting summary:')
     print('====================')
-    print(f'Time span: {startDay} to {endDay}')
-    print('Strategy: ' + strategy_name)
-    print('Total gain = {:.2f}%'.format(gain_summary['gain %'].sum()))
-    print('Watchlist: ' + watchlist_name)
+    logger.info(f"""Backtesting summary:
+        Time span: {startDay} to {endDay}
+        Strategy: {strategy_name}
+        Watchlist: {wl}
+        Total gain = {gain_summary['gain %'].sum():.2f}%
+        Number of trades: {gain_summary.shape[0]}
+        Trade details logged in {tradeLogFileName}""")
     print()
-    printTradeDict(all_trades, tradeLogFileName)
-    print(f'Trade details logged in {tradeLogFileName}')
     print('====================')
+    printTradeDict(all_trades, tradeLogFileName)
     log_listener.stop()
    
 # Backtesting with limited number of queries for candle bars
@@ -495,8 +504,8 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
 #       Update status of existing trades
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
-    startDay_str = "2025-05-01 0:30:00"
-    endDay_str = "2025-07-31 23:30:00"
+    startDay_str = "2025-01-01 0:30:00"
+    endDay_str = "2025-04-30 23:30:00"
     timezone = 'America/Los_Angeles'
     earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_2025-05-18.csv'
     watchlist_name = 'NASDAQ100_2025'
