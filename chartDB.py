@@ -370,6 +370,24 @@ class ChartDB:
             end = pd.to_datetime(end, unit='s').tz_localize('UTC').tz_convert('America/New_York')
             print(f"  {timeframe}: {start} → {end} ({count} candles)")
 
+    def printDummyCandles(self, symbol: str, timeframe: str, start: pd.Timestamp, end: pd.Timestamp):
+        """Print all dummy candles (open=high=low=close=0) for a symbol/timeframe in a given range."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT timestamp
+            FROM candles
+            WHERE symbol = ? AND timeframe = ? AND open = 0 AND high = 0 AND low = 0 AND close = 0
+            AND timestamp BETWEEN ? AND ?
+            ORDER BY timestamp ASC
+        """, (symbol, timeframe, int(start.timestamp()), int(end.timestamp())))
+        rows = cursor.fetchall()
+        if not rows:
+            print(f"No dummy candles for {symbol} {timeframe} between {start} and {end}")
+            return
+        print(f"Dummy candles for {symbol} {timeframe} between {start} and {end}:")
+        for (ts,) in rows:
+            ts_dt = pd.to_datetime(ts, unit='s').tz_localize('UTC').tz_convert('America/New_York')
+            print(f"  {ts_dt}")
     # ----------------------------------------
     # CLEANUP
     # ----------------------------------------
@@ -380,6 +398,11 @@ class ChartDB:
 # TEST MAIN (runs only if you execute chartDB.py directly)
 # ---------------------------------------------------------
 if __name__ == "__main__":
+
+    db = ChartDB('chartDB.db')
+    db.printDummyCandles('KLAC', 'm1', pd.Timestamp('2025-01-23 09:30', tz='America/New_York'), pd.Timestamp('2025-01-23 16:00', tz='America/New_York'))
+    
+    '''
     db = ChartDB("chartDB_test.db")
     db.delete_all()
 
@@ -416,6 +439,7 @@ if __name__ == "__main__":
     # Print summary
     print("\nSummary:")
     db.summary("AAPL")
+    '''
 
     '''
     bounds = db.get_data_bounds(["AAPL", "MSFT"], "1Day")

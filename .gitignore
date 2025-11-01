@@ -7,3 +7,5 @@ resample_test.py
 Trades
 Trades old
 *.db
+*.db-wal
+*.db-shm

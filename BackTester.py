@@ -493,6 +493,15 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     print('====================')
     printTradeDict(all_trades, tradeLogFileName)
     log_listener.stop()
+    # Move log file
+    try:
+    # Rename the file
+        os.rename("strat_bot.log", "strat_bot_" + test_timestamp + ".log")
+        print(f"Program log saved to 'strat_bot_{test_timestamp}.log'")
+    except FileNotFoundError:
+        print(f"Error: The file 'strat_bot.log' was not found.")
+    except OSError as e:
+        print(f"Error renaming file: {e}")
    
 # Backtesting with limited number of queries for candle bars
 # Assume that strategy is relying on D and higher TF

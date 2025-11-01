@@ -508,7 +508,6 @@ class DataRetrieval:
                 timeframe=timeframe, 
                 open_ts=open_ts
             )
-
             # Compute missing timestamps per symbol and find the range covering all missing timestamps
             start_ts = None
             end_ts = None
@@ -522,7 +521,10 @@ class DataRetrieval:
                 start_ts = start_ts_sym if start_ts is None else min(start_ts, start_ts_sym) if start_ts_sym is not None else start_ts
                 end_ts_sym = max(missing_dict[sym]) if missing_dict[sym] else None
                 end_ts = end_ts_sym if end_ts is None else max(end_ts, end_ts_sym) if end_ts_sym is not None else end_ts
-            
+
+            # Remove any candles with open=0 (dummy candles inserted to DB to prevent re-fetching). Need to ensure to do that after computing missing timestamps
+            df_found = df_found[df_found['open'] != 0]  
+
             # Fetch missing candles from Alpaca if any
             if start_ts is not None and end_ts is not None: # there are missing candles to fetch
                 fetch_timestamp = pd.Timestamp.now(tz=EST)    # conservative timestamp - if candle closes after this timestamp, assume last fetched candle is live
@@ -549,10 +551,23 @@ class DataRetrieval:
                     # Remove live candle if present from what was fetched and insert fetched candles into DB
                     last_fetched_candle = self.market_time_manager.getCandleOpenCloseTime(timestamp_s = end_ts.timestamp(), timeframe_sym=timeframe, n_pre=0, n_post=0)
                     if last_fetched_candle['current'] and last_fetched_candle['current'][1] > fetch_timestamp:
-                        df_fetched = df_fetched[df_fetched.index.get_level_values('timestamp') < last_fetched_candle['current'][0]]         
+                        df_fetched = df_fetched[df_fetched.index.get_level_values('timestamp') < last_fetched_candle['current'][0]]      
                     self.db.insert_candles(timeframe, df_fetched)
                 else:
                     df_result = df_found
+                # Sometimes Alpaca (and other brokerages) misses candles (mainly on 1min timeframe) - need to add dummy candles for missing timestamps to insert into DB (to prevent re-fetching those candles repeatedly)
+                for sym in symbols:
+                    if not df_fetched.empty and sym in df_fetched.index.get_level_values('symbol'):
+                        fetched_ts = set(df_fetched.loc[sym].index)
+                    else:
+                        fetched_ts = set()
+                    missing_after_fetch = [ts for ts in missing_dict[sym] if ts not in fetched_ts]
+                    if missing_after_fetch:
+                        logger.debug(f"""After fetching from Alpaca, still missing {len(missing_after_fetch)} candles for {sym} on timeframe {timeframe}. Inserting dummy candles to DB to prevent re-fetching.
+                                            Missing timestamps range from {min(missing_after_fetch)} to {max(missing_after_fetch)}""")
+                        df_dummy = pd.DataFrame(index=pd.MultiIndex.from_product([[sym], missing_after_fetch], names=['symbol', 'timestamp']), columns=['open', 'high', 'low', 'close'])
+                        df_dummy[['open', 'high', 'low', 'close', 'volume', 'trade_count', 'vwap']] = 0.0
+                        self.db.insert_candles(timeframe, df_dummy)
             else:
                 df_result = df_found
         except Exception as e:
@@ -671,14 +686,14 @@ def backtest_symbol(symbol, market_time_manager, time_frame, startTS, endTS):
 # Main
 # -------------------------------
 if __name__ == "__main__":
-    symbols = ['AAPL', 'GOOG']#, 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'NFLX', 'META']
+    symbols = ['AAPL', 'GOOG', 'NFLX']#, 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'NFLX', 'META']
     EST = 'America/New_York'
     pd.options.mode.copy_on_write = True
     #session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     time_manager = mtm.MarketTimeManager()
     #session = DataRetrieval(market_time_manager=time_manager)
-    startDay = pd.to_datetime("2025-09-20 10:15:00").tz_localize(EST)
-    endDay = pd.to_datetime("2025-09-23 9:58:00").tz_localize(EST)
+    startDay = pd.to_datetime("2025-02-18 10:15:00").tz_localize(EST)
+    endDay = pd.to_datetime("2025-02-18 12:58:00").tz_localize(EST)
     print(f"Requesting data from {startDay} to {endDay}")
     #watchlist = pd.read_csv('Watchlists/test_wl.csv', header = None)
     #watchlist = watchlist[0].to_list()
@@ -719,7 +734,7 @@ if __name__ == "__main__":
 
     #os.remove(file_path)
     dr = DataRetrieval(rate_limiter=None, market_time_manager=time_manager, db_path="chartDB_test.db")
-    chart_no_limit = dr.getChart(symbol_list=symbols, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    chart_no_limit = dr.getChart(symbol_list=symbols, timeframe_sym='m1', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
 
     print('Hourly chart from DataRetrieval with no rate limit: ')
     for ticker in chart_no_limit.keys():
@@ -728,13 +743,13 @@ if __name__ == "__main__":
             print(candle.to_string_full())
     
     print("\nSummary after first request:")
-    dr.db.summary("AAPL")
+    dr.db.summary("NFLX")
     print("\n")
 
     print("Adding 5min")
     startDay = startDay + pd.Timedelta(minutes=5)
     endDay = endDay + pd.Timedelta(minutes=5)
-    chart_no_limit = dr.getChart(symbol_list=symbols, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
+    chart_no_limit = dr.getChart(symbol_list=symbols, timeframe_sym='m1', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
     print('Hourly chart from DataRetrieval with no rate limit with extra 5min in the end: ')
     for ticker in chart_no_limit.keys():
         print('Symbol: ' + ticker)
@@ -742,7 +757,7 @@ if __name__ == "__main__":
             print(candle.to_string_full())
     
     print("\nSummary after second request:")
-    dr.db.summary("AAPL")
+    dr.db.summary("NFLX")
 
     '''
     chart = session.getChart(symbol_list=watchlist, timeframe_sym='m60', start_timestamp=startDay.timestamp(), end_timestamp=endDay.timestamp())
