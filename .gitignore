@@ -9,3 +9,4 @@ Trades old
 *.db
 *.db-wal
 *.db-shm
+alphavantage_config.py

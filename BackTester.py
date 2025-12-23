@@ -349,7 +349,7 @@ def addDailyCandleToChart(chartDict, lastDayDate, dayCandleToAdd, dayDateToAdd):
         chartDictNew['y'][-1].close = dayCandleToAdd.close
     return chartDictNew
 
-def backtest_symbol(dailyChart, chartDict, symbol, market_time_manager, er_list, strategy):
+def backtest_symbol(dailyChart, chartDict, symbol, market_time_manager, er_list, strategy):    
     session = DataRetrieval(rate_limiter=shared_limiter, market_time_manager=market_time_manager)  # Recreate session to avoid issues with multiprocessing
     
     logger.info(f"Starting backtest for {symbol}")
@@ -362,9 +362,6 @@ def backtest_symbol(dailyChart, chartDict, symbol, market_time_manager, er_list,
         logger.debug(f"{symbol}: Adding daily candle for {dayDateToAdd.date()}")
         chartDictNew = addDailyCandleToChart(chartDict, lastDay, dayCandleToAdd, dayDateToAdd)
         lastDay = dayDateToAdd
-        #with open('chart.txt', 'a') as f:
-        #    f.write(f"==========={symbol}=============\n")
-        #    printChartSingleSymbol(chartDict, f)
 
         # Update trades
         for trade in trades:
@@ -390,6 +387,7 @@ def backtest_symbol(dailyChart, chartDict, symbol, market_time_manager, er_list,
     #    printTrade(trade)
     logger.info(f"Completed backtest for {symbol}")
     return trades 
+    
 # Function to run backtest for given watchlist and strategy between startDay and endDay
 # startDay_str and endDay_str are strings in the format "YYYY-MM-DD HH:MM:SS" in PST timezone
 def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
@@ -399,14 +397,15 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     test_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
     tradeLogFileName = "./Trades/trades_" + startDay_str.split(' ')[0].replace('-', '') + "_" + endDay_str.split(' ')[0].replace('-', '') + "_" + watchlist_name + "_" + strategy_name + "_" + test_timestamp + ".csv"
     os.makedirs('./Trades/', exist_ok=True)
-    log_queue, log_listener = log_functions.log_init()
-    log_listener.start()
+    log_config = log_functions.log_init()
+    log_queue, log_proc = log_functions.start_logging_process(log_config)
+    #log_listener.start()
     
     logger.info(f"""Main process starting. Parameters: 
                 range: {startDay_str} to {endDay_str}
                 watchlist: {wl}
                 strategy: {strategy_name}
-                earnings file: {earnings_file})""")
+                earnings file: {earnings_file}""")
     
     mtm = MarketTimeManager.MarketTimeManager()
     session = DataRetrieval(market_time_manager=mtm)
@@ -481,18 +480,22 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
                 all_trades[trade['symbol']] = [trade]
                 gain_summary[trade['symbol']] = gain
     gain_summary = pd.DataFrame(gain_summary.items(), columns=['symbol', 'gain %'])
-    print('====================')
-    logger.info(f"""Backtesting summary:
+
+    logger.info(f"""
+    ========================
+        Backtesting summary:
         Time span: {startDay} to {endDay}
         Strategy: {strategy_name}
         Watchlist: {wl}
         Total gain = {gain_summary['gain %'].sum():.2f}%
         Number of trades: {gain_summary.shape[0]}
-        Trade details logged in {tradeLogFileName}""")
-    print()
-    print('====================')
+        Trade details logged in {tradeLogFileName}
+    ========================""")
+
     printTradeDict(all_trades, tradeLogFileName)
-    log_listener.stop()
+    print("Stopping log listener...")
+    log_functions.stop_logging_process(log_queue, log_proc)
+    print("Log listener stopped")
     # Move log file
     try:
     # Rename the file
@@ -513,12 +516,12 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
 #       Update status of existing trades
 #       Check if new trades should be open (AS in force)
 if __name__ == "__main__":
-    startDay_str = "2025-01-01 0:30:00"
-    endDay_str = "2025-04-30 23:30:00"
+    startDay_str = "2023-01-01 0:30:00"
+    endDay_str = "2025-12-20 23:30:00"
     timezone = 'America/Los_Angeles'
-    earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_2025-05-18.csv'
+    earnings_file = '/Users/ilyatoytman/Git/stratBot/EarningsCalendar_2025-12-21.csv'
     watchlist_name = 'NASDAQ100_2025'
-    strategy_name = "BasicDailyAS"
+    strategy_name = "StratLab2dGM"
     runBacktest(
         startDay_str=startDay_str, 
         endDay_str=endDay_str, 

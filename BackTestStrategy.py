@@ -251,11 +251,36 @@ class BackTestStrategy:
                 targetPrice = chartDictNew['d'][-3].low
                 direction = util.TickerStatus.SHORT
                 tradeListToReturn.append((triggerPrice, direction, targetPrice))
+        elif self.name == "StratLab2dGM":
+            if len(chartDictNew['d']) < 3:
+                return tradeListToReturn
+            # Daily AS with 2dG Month. 1-2u, 1-3, 2d-2u, 2d-3 for bullish. Bullish only
+            if (    # bullish
+                # Previous daily candle is 1 or 2d (bullish)
+                ((chartDictNew['d'][-2].get_kind() == "2" and chartDictNew['d'][-2].get_subtype() == "D") or chartDictNew['d'][-2].get_kind() == "1") and
+                # Current daily candle is 2u (bullish) or 3 (case when we break in the right direction first, then reverse is handled by checking for stop at day of entry)
+                ((chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "U") or chartDictNew['d'][-1].get_kind() == "3")
+               ):
+                triggerPrice = max(chartDictNew['d'][-2].high, chartDictNew['d'][-1].open)
+                direction = util.TickerStatus.LONG
+                if intradayCandles is None: # this is helpful for screening purposes when intraday candles are not yet available
+                    tradeListToReturn.append((triggerPrice, direction))
+                else:
+                    # Knowing trigger price, check for 2dG Month
+                    entryID = next((ii for ii, candle in enumerate(intradayCandles) if candle.high > triggerPrice), None)
+                    if not (entryID is None):
+                        monthLow = min(candle.low for candle in intradayCandles[:entryID+1]) # this day low is equal to M low if this day is the first day of the month
+                        if chartDictOld['m'][-1].open_ts == chartDictNew['m'][-1].open_ts: # this day belongs to the same month candle
+                            monthLow = min(monthLow, chartDictOld['m'][-1].low)
+                        # Check for 2d and Green Month
+                        if (monthLow < chartDictNew['m'][-2].low and        # check for 2d Month
+                            chartDictNew['m'][-1].open < triggerPrice):     # check for Green Month
+                            direction = util.TickerStatus.LONG
+                            tradeListToReturn.append((triggerPrice, direction))
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
         
-
-
+        
             '''
             # Build list of candle combos at each timeframe 
             entry_comment = ("D: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string() + 
@@ -362,7 +387,17 @@ class BackTestStrategy:
                 else:
                     trade['stop'] = chartDictNew['d'][-2].high
             return trade['stop'], exitComment
-
+        elif self.name == "StratLab2dGM":
+            exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
+            if trade['direction'] == util.TickerStatus.LONG:
+                if trade['daysOpen'] == 0:
+                    trade['stop'] = min(candle.low for candle in intradayCandles[:entryID+1])    # low of day on the day of entry
+                elif trade['daysOpen'] >= 2:
+                    trade['stop'] = max(trade['stop'], trade['entryPrice'], chartDictNew['d'][-2].low)  # move stop up to previous D low or entry price, whichever is higher
+                elif trade['daysOpen'] == 1:
+                    if chartDictNew['d'][-1].get_kind() == "2" and chartDictNew['d'][-1].get_subtype() == "U" and chartDictNew['d'][-1].get_direction() == "R" :   # if 2u red day on Day 1 - exit end of day
+                        trade['stop'] = chartDictNew['d'][-1].close + 0.01  # we add 0.01 to ensure stop is triggered 
+                return trade['stop'], exitComment
         else:
             raise ValueError(f"Strategy {self.name} not implemented in BackTestStrategy")
     # In general this can be modified for each strategy, but for now it is the same for all. If trade is active - close at end of day

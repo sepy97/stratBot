@@ -616,7 +616,8 @@ class DataRetrieval:
             symbol_or_symbols=symbols,
             timeframe=tf,
             start=start_ts,
-            end=end_ts   # even if end_ts is exactly on candle open time, that candle is still returned by Alpaca
+            end=end_ts,   # even if end_ts is exactly on candle open time, that candle is still returned by Alpaca
+            adjustment='split',
         )        
         while request_counter > 0:
             try:
