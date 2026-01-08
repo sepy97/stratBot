@@ -221,7 +221,7 @@ class DataRetrieval:
                 bars = pd.concat([bars, bars_partial]).sort_index()
             else:
                 bars = bars_partial
-        if intraday:
+        if intraday and not bars.empty:
             # For intraday, Alpaca includes candles outside of market hours, so we need to drop those
             day_count = int((end_timestamp - start_timestamp)/(24*60*60)) + 3    # to ensure we include partial days corresponding to start and end timestamps. #TODO: how many days to add?
             candle_ranges = self.market_time_manager.getCandleOpenCloseTime(timestamp_s=end_timestamp+24*60*60, timeframe_sym='d', n_pre=day_count, n_post=0)

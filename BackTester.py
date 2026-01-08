@@ -62,7 +62,7 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
     #    entryLbl = "LONG"
     #else:
     #    entryLbl = "SHORT"
-    
+
     # Get intraday chart and find the exact time of entry. Note: there could be several trades in different directions on the same day, so we need to return a list of trades
     tradeDay = session.market_time_manager.getCandleOpenCloseTime(chartDictNew['d'][-1].open_ts, 'd', n_pre=0, n_post=0)['current']
     intradayCandles = session.getChart([sym], 'm1', tradeDay[0].timestamp(), tradeDay[1].timestamp())
@@ -422,19 +422,37 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     
     # Get daily chart spanning full range of days. This is dictionary {'symbol' --> [candle list]}
     dailyChart = session.getChart(symbol_list=watchlist, timeframe_sym='d', start_timestamp=startDayToQuery['pre'][-1][0].timestamp(), end_timestamp=endDay.timestamp())
+    # Identify symbols that do not have candle at previous day before startDay (ie not enough data to form combos) - these will have to be queried separately
+    symbols_missing_daily_candle = [symbol for symbol in dailyChart.keys() if dailyChart[symbol][0].open_ts > startDayToQuery['pre'][-1][0].timestamp()]
+    symbol_complete_daily_candle = [symbol for symbol in dailyChart.keys() if dailyChart[symbol][0].open_ts <= startDayToQuery['pre'][-1][0].timestamp()]
     # Note: API calls can get multiple symbols at once, but not multiple timeframes for the same symbol. So we need to get all timeframes for each symbol separately
     TF_sym_list = ['d', 'w', 'm', 'q', 'y']
     chartByTimeframe = dict.fromkeys(TF_sym_list)
-    # Init daily chart (do it separately to save on extra query to Alpaca API). This creates a dictionary {'timeframe = d' --> {'symbol' --> first daily candle}}
-    chartByTimeframe['d'] = {symbol: dailyChart[symbol][0:2] for symbol in dailyChart.keys() if symbol} # reminder: [0:2] gets first two candles (inclusive-exclusive range)
+    # Init daily chart (do it separately to save on extra query to Alpaca API). Only for symbols that have daily candles starting from startDayToQuery['pre']
+    # This creates a dictionary {'timeframe = d' --> {'symbol' --> first daily candle}}
+    chartByTimeframe['d'] = {symbol: dailyChart[symbol][0:2] for symbol in watchlist if len(dailyChart[symbol])>1} # reminder: [0:2] gets first two candles (inclusive-exclusive range)
+    # For symbols missing daily candle at previous day before startDay - we still keep 2 candles but need to adjust higher TF charts to request starting from timestamp of the first day in DailyChart?
     # Initialize all higher TF charts (W and higher). This will generate a dictionary {'timeframe' --> {'symbol' --> [candle list]}}
     # Note: we need an extra candle for each TF to evaluate if there is AS on that TF
     for TF_sym in TF_sym_list[1:]:
         firstCandleToQuery = mtm.getCandleOpenCloseTime(startDay.timestamp(), TF_sym, n_pre=2, n_post=0)
         firstCandleToQuery = firstCandleToQuery['pre'][-1]
-        chartByTimeframe[TF_sym] = session.getChart(symbol_list=watchlist, timeframe_sym=TF_sym, start_timestamp=firstCandleToQuery[0].timestamp(), end_timestamp=lastDayBeforeRange[1].timestamp())
+        chartByTimeframe[TF_sym] = session.getChart(symbol_list=symbol_complete_daily_candle, timeframe_sym=TF_sym, start_timestamp=firstCandleToQuery[0].timestamp(), end_timestamp=lastDayBeforeRange[1].timestamp())
+        # For symbols with daily candles starting at later time - first two candles are buffer (just like the regular complete ones), use the start of the third daily candle as startDay for higher TF
+        for s in symbols_missing_daily_candle:
+            if len(dailyChart[s]) < 3:
+                logger.warning(f"Not enough daily candles for symbol {s} to form higher timeframe charts. Skipping this symbol.")
+                continue
+            firstDailyCandles = mtm.getCandleOpenCloseTime(dailyChart[s][2].open_ts, 'd', n_pre=1, n_post=0) # dailyChart[s][2] is the first day to backtest, its open time is startDay
+
+            firstCandleToQuery = mtm.getCandleOpenCloseTime(firstDailyCandles['current'][0].timestamp(), TF_sym, n_pre=2, n_post=0) # beginning of two high TF candles prior to first day to backtest
+            firstCandleToQuery = firstCandleToQuery['pre'][-1]
+            lastDayBeforeBackTest = firstDailyCandles['pre'][0] # last day before backtest day for this symbol
+            chart_single_symbol = session.getChart(symbol_list=[s], timeframe_sym=TF_sym, start_timestamp=firstCandleToQuery[0].timestamp(), end_timestamp=lastDayBeforeBackTest[1].timestamp())
+            chartByTimeframe[TF_sym][s] = chart_single_symbol[s]
+ 
     # Swap order of keys in the dictionary to {'symbol' --> {'timeframe' --> [candle list]}}
-    chartDict = {symbol: {TF_sym: chartByTimeframe[TF_sym][symbol] for TF_sym in chartByTimeframe.keys()} for symbol in watchlist}
+    chartDict = {symbol: {TF_sym: chartByTimeframe[TF_sym][symbol] for TF_sym in chartByTimeframe.keys()} for symbol in chartByTimeframe[TF_sym].keys()}
     
     # This is for debugging purposes, print chart into a file
     #if os.path.exists('chart.txt'):
