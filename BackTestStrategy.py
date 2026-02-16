@@ -252,7 +252,7 @@ class BackTestStrategy:
                 direction = util.TickerStatus.SHORT
                 tradeListToReturn.append((triggerPrice, direction, targetPrice))
         elif self.name == "StratLab2dGM":
-            if len(chartDictNew['d']) < 3:
+            if len(chartDictNew['d']) < 3 or len(chartDictNew['m']) < 2:
                 return tradeListToReturn
             # Daily AS with 2dG Month. 1-2u, 1-3, 2d-2u, 2d-3 for bullish. Bullish only
             if (    # bullish
