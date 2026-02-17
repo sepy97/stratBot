@@ -527,9 +527,9 @@ timeframe_LUT = {
     "m30": (30, "minute"),
     "m60": (60, "minute"),
     "d": (1440, "day"),      # 24 hours * 60 min
-    "w": (10080, "week"),     # 7 days * 1440 min
-    "m": (43200, "month"),    # 30 days * 1440 min
-    "q": (129600, "quarter")  # 90 days * 1440 min
+    "w": (10080, "week"),     # 7 calendar days * 1440 min (note: only ~5 are trading days)
+    "m": (43200, "month"),    # ~30 days * 1440 min (approximation, varies 28-31 days)
+    "q": (129600, "quarter")  # ~90 days * 1440 min (approximation, varies 89-92 days)
 }
 ```
 
