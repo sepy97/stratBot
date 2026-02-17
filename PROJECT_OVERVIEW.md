@@ -526,10 +526,10 @@ timeframe_LUT = {
     "m15": (15, "minute"),
     "m30": (30, "minute"),
     "m60": (60, "minute"),
-    "d": (1440, "day"),      # 24 hours * 60 min
-    "w": (10080, "week"),     # 7 calendar days * 1440 min (note: only ~5 are trading days)
-    "m": (43200, "month"),    # ~30 days * 1440 min (approximation, varies 28-31 days)
-    "q": (129600, "quarter")  # ~90 days * 1440 min (approximation, varies 89-92 days)
+    "d": (1440, "day"),         # 24 hours * 60 min
+    "w": (10080, "week"),       # 7 calendar days * 1440 min (only ~5 are trading days)
+    "m": (43200, "month"),      # ~30 calendar days * 1440 min (varies 28-31 days)
+    "q": (129600, "quarter")    # ~90 calendar days * 1440 min (varies 89-92 days)
 }
 ```
 
@@ -776,6 +776,8 @@ The bot analyzes 8 timeframes simultaneously:
 | w         | 10080   | Weekly trend (swing trading) |
 | m         | 43200   | Monthly trend (position trading) |
 | q         | 129600  | Quarterly trend (macro view) |
+
+_Note: Minutes for w/m/q timeframes are approximations based on calendar days (7, ~30, ~90 days respectively), not trading days. Actual trading periods vary due to weekends, holidays, and varying month lengths._
 
 **Hierarchy**: Higher timeframes have more weight in strategy scoring. A monthly 2U candle is a stronger signal than a 60min 2U.
 
