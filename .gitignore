@@ -1,5 +1,12 @@
-*.csv
 *.pyc
 config.py
 td_state.json
 *.log
+alpaca_config.py
+resample_test.py
+Trades
+Trades old
+*.db
+*.db-wal
+*.db-shm
+alphavantage_config.py

@@ -1,77 +1,67 @@
 import util
 
 class Strategy:
-    def __init__(self, name="", type="", patterns=None, tfc=None, exit=None):
+    def __init__(self, name="", type=""):
         self.name = name
         self.type = type
-        if patterns is None:
-            self.patterns = {}
-        else:
-            self.patterns = patterns
-        if tfc is None:
-            self.tfc = {}
-        else:
-            self.tfc = tfc
-        if exit is None:
-            self.exit = {}
-        else:
-            self.exit = exit
+        self.score = 0
+        self.weights = {}
+        self.penalties = {}
+        self.exit_condition = None
+        self.threshold = 0
+        self.AS = []
+        self.inForce = []
+        self.status = util.TickerStatus.OUT
 
-    def export_strategy(self, filename):
-        strategies_from_file = util.tomlkit.loads(util.Path(filename).read_text())
-        for element in strategies_from_file["strategies"]:
-            if element["name"] == self.name:
-                print ("Strategy already exists")
-                return False
-        print ("strategies_from_file: " + str(strategies_from_file))
-        strat = {'name': self.name, 'type': self.type, 'patterns': self.patterns, 'tfc': self.tfc, 'exit': self.exit}
-        strat_table = util.tomlkit.item(strat)
-        strat_table.add(util.tomlkit.nl())
-        strategies_from_file['strategies'].append(strat_table)
-        util.Path(filename).write_text(util.tomlkit.dumps(strategies_from_file))
+    def stratFromDict(self, data):
+        self.name = data['name']
+        self.type = data['type']
+        self.weights = data['weights']
+        self.penalties = data['penalties']
+        self.exit_condition = data['exit']
+        self.threshold = data['threshold']
 
-    def detect(self, data, ticker_logger):
-        status = util.TickerStatus.OUT
-        for t in self.tfc:
-            if data[t][0].get_direction() != self.tfc[t]:
-                ticker_logger.logger.debug("TFC is not the same for " + t + "; " + data[t][0].get_direction() + " should be " + self.tfc[t])
-                return None
-        for p in self.patterns:
-            candle_kinds = self.patterns[p].split("-")
-            # Candle kinds in the strategy pattern are kept in chronological order (from the oldest to the newest),
-            # while data is stored in reversed order (first the most recent, then the older one, etc)
-            #for i in range(len(candle_kinds)):
-            n = len(candle_kinds)
-            for i in reversed(range(n)):    # start checking from the oldest candle
-                ticker_logger.logger.debug("Candle kind # " + str(i) + ": " + candle_kinds[n-i-1] + " vs " + data[p][i].to_string())
-                if candle_kinds[n-i-1] != data[p][i].to_string():
-                    ticker_logger.logger.debug("No entry match on timeframe " + p)
-                    return None
+    def updateTFC(self, data):
+    # TODO: implement when TFC is figured out and formalized in .toml file
         if self.type == "Long":
-            status = util.TickerStatus.LONG
-            ticker_logger.logger.info("Long signal detected on strategy " + self.name)
+            for tf in (self.weights).keys():
+                if data[tf].get_direction() == "G":
+                    self.AS[tf] = True
+                else:
+                    self.AS[tf] = False
         elif self.type == "Short":
-            status = util.TickerStatus.SHORT
-            ticker_logger.logger.info("Short signal detected on strategy " + self.name)
+            return
         else:
-            print("Error: strategy type is not Long or Short")
-            return None
-        return status
+            return
+    # In Force means AS triggered. TODO: how to deal with AS that triggered and failed? 
+    def inForce(self, candles):
+        #   Long: 1-2u, 2d-2u 
+        if self.type == "Long":
+            for tf in (self.weights).keys():
+                if candles[tf][0].get_kind() == "2" and candles[tf][0].get_subtype() == "U" and \
+                    (candles[tf][1].get_kind() == "1" or (candles[tf][1].get_kind() == "2" and candles[tf][1].get_subtype() != "D")):
+                    self.inForce[tf] = True
+                else:
+                    self.inForce[tf] = False
+        #   Short: 1-2d, 2u-2d
+        else:
+            for tf in (self.weights).keys():
+                if candles[tf][0].get_kind() == "2" and candles[tf][0].get_subtype() == "D" and \
+                    (candles[tf][1].get_kind() == "1" or (candles[tf][1].get_kind() == "2" and candles[tf][1].get_subtype() != "U")):
+                    self.inForce[tf] = True
+                else:
+                    self.inForce[tf] = False
 
-    def exit_signal(self, data, exit_logger):
-        if self.exit["type"] == "counter-reversal":
-            exit_logger.logger.debug("Exit type is counter-reversal")
-            for p in self.exit: # There is only one exit-pattern
-                if p != "type": # ignore the first element which is a description of the exit type (e,g, counter-reversal)
-                    candle_kinds = self.exit[p].split("-")
-                    # Candle kinds in the strategy pattern are kept in chronological order (from the oldest to the newest),
-                    # while data is stored in reversed order (first the most recent, then the older one, etc)
-                    #for i in range(len(candle_kinds)):
-                    n = len(candle_kinds)
-                    for i in reversed(range(n)):     # start checking from the oldest candle
-                        exit_logger.logger.debug("Candle kind # " + str(i) + ": " + candle_kinds[n-i-1] + " vs " + data[p][i].to_string())
-                        if candle_kinds[n-i-1] != data[p][i].to_string():
-                            exit_logger.logger.debug("No exit match on timeframe " + p)
-                            return False
-                    exit_logger.logger.info("Exit signal detected on pattern " + p + ": " + self.exit[p])
-        return True
+
+    def checkScore(self, data):
+        self.score = 0
+        if self.type == "Long":
+            for w in self.weights:
+                if data[w][0].get_kind() == "2" and data[w][0].get_subtype() == "U":
+                    self.score += self.weights[w]
+                else:
+                    self.score += self.penalties[w]
+            if self.score >= self.threshold:
+                self.status = util.TickerStatus.LONG
+                return self.status
+        return self.status
