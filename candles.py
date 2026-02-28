@@ -1,25 +1,37 @@
 import pandas as pd
 import logging
+from datetime import datetime
 logger = logging.getLogger(__name__)
 
 class Candle:
     # Financial candle
-    def __init__(self, timestamp_ms, open, high, low, close, prev_high, prev_low, close_ts=None):
-        self.timestamp_ms = timestamp_ms    # timestamp in milliseconds (opening time. Documentation says it should be closing time - got confirmation this is a API doc bug. See https://forum.alpaca.markets/t/alpaca-historical-data-bar-timestamp/15867/2)
+    def __init__(self, timestamp, open, high, low, close, prev_high, prev_low, close_ts=None):
+        # Normalize timestamp to seconds since epoch for consistency with backtester
+        self.timestamp_s = self._normalize_timestamp_s(timestamp)
         self.open = open
         self.high = high
         self.low = low
         self.close = close
         self.previous_high = prev_high
         self.previous_low = prev_low
-        self.open_ts = self.timestamp_ms/1000
+        self.open_ts = self.timestamp_s
         self.close_ts = close_ts
+
+    @staticmethod
+    def _normalize_timestamp_s(value):
+        if isinstance(value, pd.Timestamp):
+            return float(value.timestamp())
+        if isinstance(value, datetime):
+            return float(value.timestamp())
+        if isinstance(value, (int, float)):
+            return float(value)
+        raise TypeError(f"Unsupported timestamp type: {type(value)}")
     
     def __str__(self):
-        return "Date: " + str(self.timestamp_ms) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + "\n"
+        return "Date: " + str(self.timestamp_s) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + "\n"
     
     def __repr__(self):
-        return "Date: " + str(self.timestamp_ms) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + "\n"
+        return "Date: " + str(self.timestamp_s) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + "\n"
     
     def get_kind(self):
         # Return candle kind, either 1, 2 or 3
@@ -110,5 +122,5 @@ class Candle:
         return self.get_kind() + self.get_subtype() + self.get_direction() + self.get_pattern()
     
     def to_string_full(self):
-        dt = pd.to_datetime(round(self.timestamp_ms/1000), unit='s', utc=True).tz_convert('America/New_York').floor('s')
+        dt = pd.to_datetime(round(self.timestamp_s), unit='s', utc=True).tz_convert('America/New_York').floor('s')
         return "Date: " + str(dt) + " Open: " + str(self.open) + " High: " + str(self.high) + " Low: " + str(self.low) + " Close: " + str(self.close) + " " + self.to_string() 

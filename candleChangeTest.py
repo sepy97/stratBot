@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
-import util
+import MarketTimeManager as mtm
 
 d = datetime(2022, 12, 23, 13, 30, 0)
 print("Current date: " + str(d))
-(thisClose, nextOpen) = util.getCandleChange_ms(1000*d.timestamp(), 'w')
+market_time_manager = mtm.MarketTimeManager()
+(thisClose, nextOpen) = market_time_manager.getCandleChange(d.timestamp(), 'w')
 
-print("Candle close: " + str(datetime.fromtimestamp(thisClose/1000)))
-print("Next candle open: " + str(datetime.fromtimestamp(nextOpen/1000)))
+print("Candle close: " + str(datetime.fromtimestamp(thisClose)))
+print("Next candle open: " + str(datetime.fromtimestamp(nextOpen)))

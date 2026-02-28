@@ -439,7 +439,7 @@ class DataRetrieval:
             bars_prev = bars.shift(1)
             bars_prev.iat[0, bars_prev.columns.get_loc('high')] = previousHigh
             bars_prev.iat[0, bars_prev.columns.get_loc('low')] = previousLow
-            convertedData = bars.apply(lambda row: candles.Candle(row.name.timestamp()*1000, row.open, row.high, row.low, row.close, bars_prev.loc[row.name, 'high'].item(), bars_prev.loc[row.name, 'low'].item()), axis=1).to_list()
+            convertedData = bars.apply(lambda row: candles.Candle(row.name.timestamp(), row.open, row.high, row.low, row.close, bars_prev.loc[row.name, 'high'].item(), bars_prev.loc[row.name, 'low'].item()), axis=1).to_list()
             return convertedData
         else:   # this should never execute
             return []

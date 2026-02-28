@@ -84,7 +84,7 @@ if __name__ == '__main__':
     scheduler = BackgroundScheduler()
     proper_start_time = market_time_manager.getProperStartTime(datetime.now(), time_quant)
     print(f"Proper start time: {proper_start_time}")
-    print(f"Opening time: {datetime.fromtimestamp(market_time_manager.getTodayOpenTime_ms()//1000)}")
+    print(f"Opening time: {datetime.fromtimestamp(market_time_manager.getTodayOpenTime())}")
     scheduler.add_job(lambda:scheduling(watchlist, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
     scheduler.start()
 

@@ -12,7 +12,7 @@ import logging
 # TODO: add yearly back into LUT
 logger = logging.getLogger(__name__)
 SUPPORTED_TIMEFRAMES = ['y', 'q', 'm', 'w', 'd', 'm60', 'm30', 'm15', 'm5', 'm1']
-timeframe_LUT = {'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
+timeframe_LUT = {'q': (91*24*60*60, "year", "monthly", 1), 'm': (30*24*60*60, "year", "monthly", 1), 'w': (7*24*60*60, "month", "weekly", 1), 'd': (24*60*60, "month", "daily", 1), 'm60': (60*60, "day", "minute", 30), 'm30': (30*60, "day", "minute", 30), 'm15': (15*60, "day", "minute", 15), 'm5': (5*60, "day", "minute", 5)}
 class MarketTimeManager:
     def __init__(self):
 
@@ -32,33 +32,33 @@ class MarketTimeManager:
         #     'open': datetime.datetime(2026, 1, 5, 9, 30)}]
 
     def getPreviousTradingDay(self, fromDay = None):  #TODO: convert to use Alpaca client
-        # Get date of previous trading day as timestamp in ms, at time 00:00:00
+        # Get date of previous trading day as timestamp in seconds, at time 00:00:00
         nyse = mcal.get_calendar('NYSE')
         if fromDay == None:
             fromDay = datetime.now()
         date = fromDay - pd.tseries.offsets.CustomBusinessDay(1, holidays = nyse.holidays().holidays)
         d = date.date()
         timestamp = datetime.strptime(str(d), '%Y-%m-%d').timestamp()
-        return int(1000*timestamp)
-    def getTodayCloseTime_ms(self): #TODO: convert to use Alpaca client
+        return int(timestamp)
+    def getTodayCloseTime(self): #TODO: convert to use Alpaca client
         nyse = mcal.get_calendar('NYSE')
         todayDataFrame = nyse.schedule(str(datetime.now().date()), str(datetime.now().date()))
         closeTime = todayDataFrame.iloc[-1]['market_close']
-        return int(closeTime*1000)
-    def getTodayOpenTime_ms(self):  #TODO: convert to use Alpaca client
+        return int(closeTime.timestamp())
+    def getTodayOpenTime(self):  #TODO: convert to use Alpaca client
         # TODO: check if it is not a trading day
         nyse = mcal.get_calendar('NYSE')
         todayDataFrame = nyse.schedule(str(datetime.now().date()), str(datetime.now().date()))
         openTime = todayDataFrame.iloc[-1]['market_open']
-        return int(openTime.timestamp()*1000)
+        return int(openTime.timestamp())
 
-    def getStartOf3Candles(self, endTime_ms, timeframe):  #TODO: convert to use Alpaca client
+    def getStartOf3Candles(self, endTime_s, timeframe):  #TODO: convert to use Alpaca client
         # Get period of time required to cover 4 candles worth of data for given timeframe ending at specific endTime  
         #    (3 latest candles to form pattern, 1 candle before these 3 to provide previous high/low)
         # 3 quarterly candles and 3 monthly candles can be contained within 1 year
         # 3 weekly candles and 3 daily candles require 1 month of data 
         # All intraday timeframes require data starting previous trading day
-        endTime = datetime.fromtimestamp(endTime_ms/1000)
+        endTime = datetime.fromtimestamp(endTime_s)
         if timeframe == "y":
             startTime = endTime.replace(year=endTime.year-3, month=1, day=1)
         if (timeframe == "q"):
@@ -76,42 +76,42 @@ class MarketTimeManager:
         if (timeframe == "m60") or (timeframe == "m30") or (timeframe == "m15") or (timeframe == "m5"): #TODO: clean up to reduce the amount of data to last trading day only
             nyse = mcal.get_calendar('NYSE')
             prevDay = self.getPreviousTradingDay(endTime)
-            sch = nyse.schedule(datetime.fromtimestamp(prevDay/1000).date(), datetime.fromtimestamp(prevDay/1000).date())
+            sch = nyse.schedule(datetime.fromtimestamp(prevDay).date(), datetime.fromtimestamp(prevDay).date())
             startTime = sch.iloc[-1]['market_open']
-        startTime = int(startTime.timestamp()*1000)
+        startTime = int(startTime.timestamp())
         return startTime
 
-    def getOpenCloseAtDay(self, timestamp_ms):    #TODO: convert to use Alpaca client
-        # Get open and close timestamps (in ms) at a day defined by timestamp_ms
-        # Returns a dictionary with "open" and "close" fields. Both fields set to 0 if timestamp_ms falls on a non-trading day (weekend or holiday)
+    def getOpenCloseAtDay(self, timestamp_s):    #TODO: convert to use Alpaca client
+        # Get open and close timestamps (in seconds) at a day defined by timestamp_s
+        # Returns a dictionary with "open" and "close" fields. Both fields set to 0 if timestamp_s falls on a non-trading day (weekend or holiday)
         nyse = mcal.get_calendar('NYSE')
-        date = datetime.fromtimestamp(timestamp_ms/1000).date()
+        date = datetime.fromtimestamp(timestamp_s).date()
         schedule = nyse.schedule(start_date=str(date), end_date=str(date))
         result = {"open": 0, "close": 0}
         if not schedule.empty:
             closeTime = schedule.iloc[-1]['market_close']
             openTime = schedule.iloc[-1]['market_open']
-            result["open"] = int(1000*openTime.timestamp())
-            result["close"] = int(1000*closeTime.timestamp())
+            result["open"] = int(openTime.timestamp())
+            result["close"] = int(closeTime.timestamp())
         return result
         
-    def isMarketOpen(self, timestamp_ms): #TODO: convert to use Alpaca client
+    def isMarketOpen(self, timestamp_s): #TODO: convert to use Alpaca client
         # Note - if timestamp is equal to market close then return false 
-        marketOpenClose = self.getOpenCloseAtDay(timestamp_ms)
-        return (marketOpenClose["open"] <= timestamp_ms) and (marketOpenClose["close"] > timestamp_ms)
+        marketOpenClose = self.getOpenCloseAtDay(timestamp_s)
+        return (marketOpenClose["open"] <= timestamp_s) and (marketOpenClose["close"] > timestamp_s)
         
-    def getCandleChange_ms(self, timestamp_ms, timeframe):  #TODO: convert to use Alpaca client
+    def getCandleChange(self, timestamp_s, timeframe):  #TODO: convert to use Alpaca client
         # At all timeframes:
-        #    candleEndTimeStamp_ms- return timestamp of close of candle  containing 'timestamp_ms' if it is within market hours, or close of most recent candle
-        #    nextCandleStartTimeStamp_ms - return timestamp of open of next candle 
+        #    candleEndTimeStamp_s - return timestamp of close of candle containing 'timestamp_s' if it is within market hours, or close of most recent candle
+        #    nextCandleStartTimeStamp_s - return timestamp of open of next candle 
         # Candle starts at xx:xx:00 time, and ends at xx:xx:59 time (e.g. first m15 in the regular trading day ends at 6:44:59 PST). All microseconds are reset to 0
         # For Y, Q, W - return market close timestamp minus 1sec for day corresponding to end of corresponding macro-period 
         # For D - return market close timestamp minus 1 sec of the most recent trading day 
         # For intraday:
-        #    If timestamp_ms is outside trading hours - return most recent market close timestamp 
-        #    If timestamp_ms is within trading hours then find integer k such that: t_open + k*p <= timestamp_ms < t_open + (k+1)*p 
+        #    If timestamp_s is outside trading hours - return most recent market close timestamp 
+        #    If timestamp_s is within trading hours then find integer k such that: t_open + k*p <= timestamp_s < t_open + (k+1)*p 
         #        where t_open is market open time at the day, p is corresponding period (60min for m60, 15min for m15, etc)
-        #        k = floor((timestamp_ms - t_open)/p) but since timestamp_ms > t_open we can do int((timestamp_ms - t_open)/p)
+        #        k = floor((timestamp_s - t_open)/p) but since timestamp_s > t_open we can do int((timestamp_s - t_open)/p)
         #        Close of candle is (initially) t_open + (k+1)*p
         #        If close of candle outside of trading hours then return market close minus 1sec
 
@@ -121,33 +121,33 @@ class MarketTimeManager:
         #     For large time frames (D and larger): detect end of calendar period (year, quarter, month, week, day) containing timestamp, then get daily schedule for the last 7 days
         #     For instraday - find timestamps and compare against open and close time of the day
 
-        timestampDate = datetime.fromtimestamp(timestamp_ms/1000)
+        timestampDate = datetime.fromtimestamp(timestamp_s)
         nyse = mcal.get_calendar('NYSE')
         schedule = nyse.schedule(start_date=str(timestampDate), end_date=str(timestampDate))
-        candleEndTimeStamp_ms = None
-        nextCandleStartTimeStamp_ms = None
+        candleEndTimeStamp_s = None
+        nextCandleStartTimeStamp_s = None
         periodEndDate = None
-        if (not schedule.empty) and (timestamp_ms < 1000*schedule.iloc[-1]['market_open'].timestamp()):  # before market open on a trading day - ignore this day
+        if (not schedule.empty) and (timestamp_s < schedule.iloc[-1]['market_open'].timestamp()):  # before market open on a trading day - ignore this day
             timestampDate = timestampDate - timedelta(days=1)
 
         # intraday
         if (timeframe=="m60") or (timeframe=="m30") or (timeframe=="m15") or (timeframe=="m5"):
-            if (not schedule.empty) and (timestamp_ms >= 1000*schedule.iloc[-1]['market_open'].timestamp()) and (timestamp_ms < 1000*schedule.iloc[-1]['market_close'].timestamp()):  #timestamp_ms is inside trading hours
+            if (not schedule.empty) and (timestamp_s >= schedule.iloc[-1]['market_open'].timestamp()) and (timestamp_s < schedule.iloc[-1]['market_close'].timestamp()):  #timestamp_s is inside trading hours
                 period = timeframe_LUT[timeframe][0]
-                openTime_ms = 1000*schedule.iloc[-1]['market_open'].timestamp()
-                closeTime_ms = 1000*schedule.iloc[-1]['market_close'].timestamp()
-                k = int((timestamp_ms - openTime_ms)/period)
-                periodEndTimestamp_ms = openTime_ms + (k+1)*period
-                candleEndTimeStamp_ms = min(periodEndTimestamp_ms, closeTime_ms)-1000
-                if candleEndTimeStamp_ms + 1000 >= closeTime_ms:
-                    periodEndDate = datetime.fromtimestamp(closeTime_ms/1000)
+                openTime_s = schedule.iloc[-1]['market_open'].timestamp()
+                closeTime_s = schedule.iloc[-1]['market_close'].timestamp()
+                k = int((timestamp_s - openTime_s)/period)
+                periodEndTimestamp_s = openTime_s + (k+1)*period
+                candleEndTimeStamp_s = min(periodEndTimestamp_s, closeTime_s)-1
+                if candleEndTimeStamp_s + 1 >= closeTime_s:
+                    periodEndDate = datetime.fromtimestamp(closeTime_s)
                     scheduleNextPeriod = nyse.schedule(start_date=str(periodEndDate+timedelta(days=1)), end_date=str(periodEndDate+timedelta(days=7)))
-                    nextCandleStartTimeStamp_ms = int(1000*scheduleNextPeriod.iloc[0]['market_open'].timestamp())
+                    nextCandleStartTimeStamp_s = int(scheduleNextPeriod.iloc[0]['market_open'].timestamp())
                 else:
-                    nextCandleStartTimeStamp_ms = candleEndTimeStamp_ms + 1000
-                return candleEndTimeStamp_ms, nextCandleStartTimeStamp_ms
+                    nextCandleStartTimeStamp_s = candleEndTimeStamp_s + 1
+                return candleEndTimeStamp_s, nextCandleStartTimeStamp_s
 
-            else:      #timestamp_ms is outside of market hours
+            else:      #timestamp_s is outside of market hours
                 periodEndDate = timestampDate
 
         # yearly 
@@ -170,27 +170,26 @@ class MarketTimeManager:
 
         periodStartDate = periodEndDate - timedelta(days=7)
         schedule = nyse.schedule(start_date=str(periodStartDate), end_date=str(periodEndDate))
-        candleEndTimeStamp_ms = int(1000*(schedule.iloc[-1]['market_close']-timedelta(seconds=1)).timestamp())
+        candleEndTimeStamp_s = int((schedule.iloc[-1]['market_close']-timedelta(seconds=1)).timestamp())
         scheduleNextPeriod = nyse.schedule(start_date=str(schedule.iloc[-1]['market_close']+timedelta(days=1)), end_date=str(schedule.iloc[-1]['market_close']+timedelta(days=7)))
-        nextCandleStartTimeStamp_ms = int(1000*scheduleNextPeriod.iloc[0]['market_open'].timestamp())
-        return candleEndTimeStamp_ms, nextCandleStartTimeStamp_ms
+        nextCandleStartTimeStamp_s = int(scheduleNextPeriod.iloc[0]['market_open'].timestamp())
+        return candleEndTimeStamp_s, nextCandleStartTimeStamp_s
 
     def detectTFFlip(self, current_time, TFperiod, time_quant): #TODO: convert to use Alpaca client
-        #opening_time = getOpenCloseAtDay(int(1000*current_time.timestamp()))["open"]
-        opening_timestamp = self.getTodayOpenTime_ms()
-        current_timestamp = int(1000*current_time.timestamp())
+        #opening_time = getOpenCloseAtDay(int(current_time.timestamp()))["open"]
+        opening_timestamp = self.getTodayOpenTime()
+        current_timestamp = int(current_time.timestamp())
         delta = current_timestamp - opening_timestamp
         modulo = delta % TFperiod
-        if modulo < time_quant*1000:
+        if modulo < time_quant:
             return True
         return False
 
     def getProperStartTime(self, current_time, time_quant): #TODO: convert to use Alpaca client
         # TODO: check for the day to be a trading day
-        opening_time = self.getTodayOpenTime_ms()
-        time_quant_ms = time_quant*1000
-        delta = int (1000*current_time.timestamp()) - opening_time
-        proper_start_time = datetime.fromtimestamp((opening_time + (delta//time_quant_ms + 1)*time_quant_ms)/1000)
+        opening_time = self.getTodayOpenTime()
+        delta = int(current_time.timestamp()) - opening_time
+        proper_start_time = datetime.fromtimestamp(opening_time + (delta//time_quant + 1)*time_quant)
         return proper_start_time
 
     # Implementation details:

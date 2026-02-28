@@ -107,7 +107,7 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
             # Check if this day falls into the new HTF candle (ie we don't have decoupling yet)
             if chartDictOld[tf][-1].open_ts < chartDictNew[tf][-1].open_ts:
                 currentCandleDict[tf] = candles.Candle(
-                    timestamp_ms=chartDictNew[tf][-1].open_ts*1000,
+                    timestamp=chartDictNew[tf][-1].open_ts,
                     open=chartDictNew[tf][-1].open,
                     high=currentDayHigh,
                     low=currentDayLow,
@@ -117,7 +117,7 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
                 )
             else: # we have decoupling, this partial daily candle needs to be aggregated into HTF candle
                 currentCandleDict[tf] = candles.Candle(
-                    timestamp_ms=chartDictNew[tf][-1].open_ts*1000,
+                    timestamp=chartDictNew[tf][-1].open_ts,
                     open=chartDictNew[tf][-1].open,
                     high=max(currentDayHigh, chartDictOld[tf][-1].high),
                     low=min(currentDayLow, chartDictOld[tf][-1].low),
