@@ -4,7 +4,7 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.triggers.combining import AndTrigger, OrTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
-import ticker
+import Ticker
 import util
 import strategy
 import session

@@ -2,18 +2,19 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 import queue
 import time
-import alpaca_chart
+from alpaca.data import StockHistoricalDataClient
 
 from datetime import datetime, timedelta
 
 import util
+from alpaca_config import alpaca_config
+import MarketTimeManager as mtm
 from Broker import Broker
 from DataRetrieval import DataRetrieval
 from Ticker import Ticker
-from strategy import Strategy
-import session
+from BackTestStrategy import BackTestStrategy
 
-def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, opening_time, time_quant=5):
+def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant=5):
     current_time = datetime.now()
     DR_queue.put(symbols)
     with DR_condition:
@@ -21,7 +22,7 @@ def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, opening_time, 
     #print("Data retrieval signal sent", flush=True)
     for t in TF:
         TF[t] = False
-        if candle_flipped := util.detectTFFlip(current_time, util.timeframe_LUT[t][0], time_quant):
+        if candle_flipped := market_time_manager.detectTFFlip(current_time, mtm.timeframe_LUT[t][0], time_quant):
             TF[t] = True
             print(f"Timeframe {t} flipped: {candle_flipped} at time {current_time}", flush=True)
     with TF_condition:
@@ -35,7 +36,8 @@ if __name__ == '__main__':
     # load watchlist from config file
     #watchlist = util.loadSymbols()
     watchlist = ["TSLA", "AAPL", "QQQ", "SQQQ"]
-    session = alpaca_chart.initSession()
+    session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
+    market_time_manager = mtm.MarketTimeManager()
 
     # create global queues for scheduled data retrieval, for data with tickers quotes, and for signals to broker
     # each queue is used for communication between different threads
@@ -70,12 +72,7 @@ if __name__ == '__main__':
     tickers = []
     for symbol in watchlist:
         t = Ticker(symbol, ticker_queues[watchlist.index(symbol)], TF, broker_queue, ticker_condition, TF_condition, broker_condition, daemon=True)
-        strategies = util.loadStrategies()
-        for s in strategies:
-            strategy = Strategy()
-            strategy.stratFromDict(s)
-            t.strategies.append(strategy)
-        #t.strategies.append(Strategy())
+        t.strategies.append(BackTestStrategy("BasicDailyAS"))
         data = data_retriever.get_initial_data(symbol, ["m5", "m15", "m30", "m60", "d", "w", "m", "q"])
         t.initializeCandles(data)
         tickers.append(t)
@@ -85,10 +82,10 @@ if __name__ == '__main__':
 
     # create global APScheduler and schedule data retrieval (by function that adds signal to the queue) every 5 seconds
     scheduler = BackgroundScheduler()
-    proper_start_time = util.getProperStartTime(datetime.now(), time_quant)
+    proper_start_time = market_time_manager.getProperStartTime(datetime.now(), time_quant)
     print(f"Proper start time: {proper_start_time}")
-    print(f"Opening time: {datetime.fromtimestamp(util.getTodayOpenTime_ms()//1000)}")
-    scheduler.add_job(lambda:scheduling(watchlist, DR_queue, DR_condition, TF, TF_condition, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
+    print(f"Opening time: {datetime.fromtimestamp(market_time_manager.getTodayOpenTime_ms()//1000)}")
+    scheduler.add_job(lambda:scheduling(watchlist, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
     scheduler.start()
 
     time.sleep(6000)

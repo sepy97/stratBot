@@ -2,7 +2,6 @@ import threading
 from datetime import datetime
 import util
 from candles import Candle
-import strategy
 
 class Ticker(threading.Thread):
     # Ticker with history at multiple time frames
@@ -57,17 +56,32 @@ class Ticker(threading.Thread):
                 dumpstr += "\n"
             self.lastUpdated = update_time
             self.logger.logger.debug(dumpstr)
-            # TODO: iterate over strategies, update AS that involve flipped TFs, check triggers, and, if triggered, issue signals to broker
-            for s in self.strategies:
-                status = s.checkScore(self.candles)
-                stratstr = f"Strategy {s.name} {s.type} got score {s.score} \n"
-                stratstr += f"Compared to threshold {s.threshold} and resulted in status {status}"
-                self.logger.logger.debug(stratstr)
-                # TODO: change the status of the ticker
-            # for now, just send the symbol to the broker
-            self.output_queue.put(self.symbol)
-            with self.broker_condition:
-                self.broker_condition.notify()
+            # Build chartDictNew: reverse live candle order to match BackTestStrategy indexing
+            # BackTestStrategy: [-1]=current, [-2]=prev; live candles: [0]=current, [1]=prev
+            chart = {}
+            for tf in ['d', 'w', 'm', 'q']:
+                if tf in self.candles and self.candles[tf] is not None:
+                    chart[tf] = list(reversed(self.candles[tf]))
+
+            if self.status == util.TickerStatus.OUT and len(chart.get('d', [])) >= 2:
+                for s in self.strategies:
+                    if s.screenTrade(chart, None):
+                        trades = s.getNewTrade(chart, None)
+                        for trade in trades:
+                            triggerPrice, direction = trade[0], trade[1]
+                            self.status = direction
+                            self.entryPrice = triggerPrice
+                            self.logger.logger.info(
+                                f"ENTRY SIGNAL: {self.symbol} {direction.name} at trigger {triggerPrice}"
+                            )
+                            self.output_queue.put(self.symbol)
+                            with self.broker_condition:
+                                self.broker_condition.notify()
+                            break
+                    if self.status != util.TickerStatus.OUT:
+                        break
+            else:
+                self.logger.logger.debug(f"{self.symbol} status={self.status.name}, no signal check needed")
         return
 
     def update(self, quote, timestamp):
@@ -91,6 +105,11 @@ class Ticker(threading.Thread):
                 newCandle = Candle(timestamp, price, price, price, price, prev_high, prev_low)
                 candles.insert(0, newCandle)
                 candles.pop()
+                # @@@ TODO: WHY?
+                # Reset entry state at the start of each new trading day
+                if tf == 'd':
+                    self.status = util.TickerStatus.OUT
+                    self.entryPrice = 0.0
 
 
     def updateClose(self, close_price):
