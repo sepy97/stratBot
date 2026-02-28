@@ -10,3 +10,7 @@ Trades old
 *.db-wal
 *.db-shm
 alphavantage_config.py
+.vscode
+.idea
+*.xml
+*.sml

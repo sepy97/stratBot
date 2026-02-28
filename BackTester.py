@@ -102,7 +102,7 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
         currentDayLow = min(candle.low for candle in intradayCandles[:entryID+1])
         currentDayHigh = max(candle.high for candle in intradayCandles[:entryID+1])
         # Create a dictionary with current partial candle (just at the entry) for each timeframe
-        currentCandleDict = dict.fromkeys(chartDictNew.keys())
+        currentCandleDict: dict[str, candles.Candle] = {}
         for tf in chartDictOld.keys():    
             # Check if this day falls into the new HTF candle (ie we don't have decoupling yet)
             if chartDictOld[tf][-1].open_ts < chartDictNew[tf][-1].open_ts:
@@ -211,7 +211,7 @@ def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
             else:
                 entryID = next((ii for ii, candle in enumerate(intradayCandles) if (candle.low <= trade['stop'] or candle.high >= trade['target'])), None)
                 if entryID is None:
-                    logger.warning(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open')
+                    logger.warning(f"{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open")
                     return
                 if intradayCandles[entryID].low <= trade['stop']:
                     trade['stop type'] = "stop hit"
@@ -227,7 +227,7 @@ def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
             else:
                 entryID = next((ii for ii, candle in enumerate(intradayCandles) if (candle.high >= trade['stop'] or candle.low <= trade['target'])), None)
                 if entryID is None:
-                    logger.warning(f'{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open')
+                    logger.warning(f"{trade['symbol']}: No {trade['direction'].name} exit found intraday but expected an exit based on daily chart on {tradeDay[0]}, stop = {trade['stop']}, target = {trade['target']}. Keep trade open")
                     return
                 if intradayCandles[entryID].high >= trade['stop']:
                     trade['stop type'] = "stop hit"
@@ -427,7 +427,7 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     symbol_complete_daily_candle = [symbol for symbol in dailyChart.keys() if dailyChart[symbol][0].open_ts <= startDayToQuery['pre'][-1][0].timestamp()]
     # Note: API calls can get multiple symbols at once, but not multiple timeframes for the same symbol. So we need to get all timeframes for each symbol separately
     TF_sym_list = ['d', 'w', 'm', 'q', 'y']
-    chartByTimeframe = dict.fromkeys(TF_sym_list)
+    chartByTimeframe: dict[str, dict] = {}
     # Init daily chart (do it separately to save on extra query to Alpaca API). Only for symbols that have daily candles starting from startDayToQuery['pre']
     # This creates a dictionary {'timeframe = d' --> {'symbol' --> first daily candle}}
     chartByTimeframe['d'] = {symbol: dailyChart[symbol][0:2] for symbol in watchlist if len(dailyChart[symbol])>1} # reminder: [0:2] gets first two candles (inclusive-exclusive range)

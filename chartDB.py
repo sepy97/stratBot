@@ -2,7 +2,7 @@ import sqlite3
 import pandas as pd
 import time
 from datetime import datetime
-from typing import Optional, Callable, List, Tuple, Union
+from typing import Optional, Callable, List, Tuple, Union, cast
 from itertools import product
 
 # Optional: for testing only
@@ -61,7 +61,7 @@ class ChartDB:
         # ✅ If DataFrame has MultiIndex, flatten it
         if isinstance(df.index, pd.MultiIndex):
             # Get the timestamp level
-            ts_level = df.index.levels[1]
+            ts_level = cast(pd.DatetimeIndex, df.index.levels[1])
 
             # Make sure it's tz-aware
             if ts_level.tz is None:
@@ -69,7 +69,7 @@ class ChartDB:
 
             # Convert to EST
             df.index = df.index.set_levels(
-                ts_level.tz_convert("America/New_York"), level=1
+                list(ts_level.tz_convert("America/New_York")), level=1
             )
             df.reset_index(inplace=True)
         # ✅ If DataFrame has single index = timestamp, ensure timestamp is column
@@ -129,7 +129,7 @@ class ChartDB:
                 WHERE (symbol, timestamp) IN (VALUES {values_clause})
                 AND timeframe = ?
             """
-            df_found = pd.read_sql_query(query, self.conn, params=flat_params)
+            df_found = pd.read_sql_query(query, self.conn, params=tuple(flat_params))
         else:
             # --- Large dataset: TEMP TABLE + batched inserts ---
             cur = self.conn.cursor()

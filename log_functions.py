@@ -30,7 +30,7 @@ def log_init(log_file="strat_bot.log"):
         "datefmt": "%Y-%m-%d %H:%M:%S",
     }
 
-def _logging_process_main(log_queue: mp.Queue, config: dict):
+def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
     """
     Dedicated logging process that receives LogRecords from all workers
     and the main process and writes them to console + file using the
@@ -102,7 +102,7 @@ def start_logging_process(config):
 
     return log_queue, log_proc
 
-def stop_logging_process(log_queue: mp.Queue, log_proc: mp.Process, timeout: float = 5.0):
+def stop_logging_process(log_queue: mp.SimpleQueue, log_proc: mp.Process, timeout: float = 5.0):
     """
     Stop the logging process by sending sentinel and joining it.
     If it doesn't exit within `timeout` seconds, terminate it.
@@ -123,7 +123,7 @@ def stop_logging_process(log_queue: mp.Queue, log_proc: mp.Process, timeout: flo
         log_proc.join(1.0)
 
 
-def subprocess_init(log_queue: mp.Queue) -> None:
+def subprocess_init(log_queue: mp.SimpleQueue) -> None:
     #h = logging.handlers.QueueHandler(log_queue)
     h = SimpleQueueHandler(log_queue)
     logger = logging.getLogger()

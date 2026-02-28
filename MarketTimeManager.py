@@ -3,9 +3,10 @@ import pandas_market_calendars as mcal
 from datetime import datetime, timedelta, date
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetCalendarRequest
+from alpaca.trading.models import Calendar
 from alpaca_config import alpaca_config
 import pytz
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, cast
 import logging
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
@@ -18,7 +19,7 @@ class MarketTimeManager:
 
         self.trading_client = TradingClient(alpaca_config['key'], alpaca_config['secret_key'])  # or paper=False for live
         tz = pytz.timezone('America/New_York')
-        calendar = self.trading_client.get_calendar()
+        calendar = cast(List[Calendar], self.trading_client.get_calendar())
         self.calendar = pd.DataFrame([{'date': c.date, 'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in calendar])
         self.calendar.index = self.calendar['date']
         #if dateRange is None:
@@ -36,21 +37,30 @@ class MarketTimeManager:
         nyse = mcal.get_calendar('NYSE')
         if fromDay == None:
             fromDay = datetime.now()
-        date = fromDay - pd.tseries.offsets.CustomBusinessDay(1, holidays = nyse.holidays().holidays)
+        date = fromDay - pd.tseries.offsets.CustomBusinessDay(1, holidays = nyse.holidays().holidays)  # type: ignore[attr-defined]
         d = date.date()
         timestamp = datetime.strptime(str(d), '%Y-%m-%d').timestamp()
         return int(timestamp)
     def getTodayCloseTime(self): #TODO: convert to use Alpaca client
         nyse = mcal.get_calendar('NYSE')
-        todayDataFrame = nyse.schedule(str(datetime.now().date()), str(datetime.now().date()))
-        closeTime = todayDataFrame.iloc[-1]['market_close']
-        return int(closeTime.timestamp())
+        check_date = datetime.now().date()
+        for _ in range(7):
+            todayDataFrame = nyse.schedule(str(check_date), str(check_date))
+            if not todayDataFrame.empty:
+                closeTime = todayDataFrame.iloc[-1]['market_close']
+                return int(closeTime.timestamp())
+            check_date -= timedelta(days=1)
+        raise RuntimeError("No trading day found in the last 7 days")
     def getTodayOpenTime(self):  #TODO: convert to use Alpaca client
-        # TODO: check if it is not a trading day
         nyse = mcal.get_calendar('NYSE')
-        todayDataFrame = nyse.schedule(str(datetime.now().date()), str(datetime.now().date()))
-        openTime = todayDataFrame.iloc[-1]['market_open']
-        return int(openTime.timestamp())
+        check_date = datetime.now().date()
+        for _ in range(7):
+            todayDataFrame = nyse.schedule(str(check_date), str(check_date))
+            if not todayDataFrame.empty:
+                openTime = todayDataFrame.iloc[-1]['market_open']
+                return int(openTime.timestamp())
+            check_date -= timedelta(days=1)
+        raise RuntimeError("No trading day found in the last 7 days")
 
     def getStartOf3Candles(self, endTime_s, timeframe):  #TODO: convert to use Alpaca client
         # Get period of time required to cover 4 candles worth of data for given timeframe ending at specific endTime  
@@ -168,6 +178,8 @@ class MarketTimeManager:
         if timeframe=="d":
             periodEndDate = timestampDate
 
+        if periodEndDate is None:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
         periodStartDate = periodEndDate - timedelta(days=7)
         schedule = nyse.schedule(start_date=str(periodStartDate), end_date=str(periodEndDate))
         candleEndTimeStamp_s = int((schedule.iloc[-1]['market_close']-timedelta(seconds=1)).timestamp())
@@ -203,7 +215,6 @@ class MarketTimeManager:
             raise ValueError(f"Unsupported timeframe: {timeframe_sym}. Supported timeframes are: {SUPPORTED_TIMEFRAMES}")
         candleOpenCloseTime = {'pre': [], 'current': None, 'post': []}
         #nyse = mcal.get_calendar('NYSE')
-        tz = pytz.timezone('America/New_York')
         timestampDate = pd.to_datetime(timestamp_s, unit='s', utc=True).tz_convert('America/New_York')     # convert to Panda Datetime and ensure it is timezone-aware and in NY timezone
         if timestampDate.date() < self.calendar.index[0] or timestampDate.date() > self.calendar.index[-1]:  # timestamp is outside of the calendar range
             logger.error(f"Timestamp {timestampDate} is outside of the calendar range")
@@ -391,6 +402,8 @@ class MarketTimeManager:
                 this_period_start = timestampDate.replace(hour=0, minute=0, second=0) - pd.Timedelta(days=timestampDate.weekday())
                 #this_period_end = timestampDate.replace(hour=23, minute=59, second=59) + pd.Timedelta(days=6-timestampDate.weekday())
                 period_offset = pd.DateOffset(days=7)
+            else:
+                raise ValueError(f"Unsupported timeframe in HTF branch: {timeframe_sym}")
 
             this_period_end = this_period_start + period_offset - offset_1sec
             #schedule_start = nyse.schedule(start_date=this_period_start, end_date=this_period_start+offset_7days)
@@ -461,36 +474,36 @@ class MarketTimeManager:
     def getCandleList(self, timeframe: str, start_time: int, end_time: int) -> Tuple[List[pd.Timestamp], List[pd.Timestamp]]:
         if not timeframe in SUPPORTED_TIMEFRAMES:
             raise ValueError(f"Unsupported timeframe: {timeframe}. Supported timeframes are: {SUPPORTED_TIMEFRAMES}")
-        start_time = pd.to_datetime(start_time, unit='s', utc=True).tz_convert('America/New_York')
-        end_time = pd.to_datetime(end_time, unit='s', utc=True).tz_convert('America/New_York')
-        if start_time >= end_time:
+        start_dt = pd.to_datetime(start_time, unit='s', utc=True).tz_convert('America/New_York')
+        end_dt = pd.to_datetime(end_time, unit='s', utc=True).tz_convert('America/New_York')
+        if start_dt >= end_dt:
             raise ValueError("start_time must be earlier than end_time")
-        if start_time.date() < self.calendar.index[0] or end_time.date() > self.calendar.index[-1]:  # timestamp is outside of the calendar range
-            logger.error(f"Start time {start_time} or end time {end_time} is outside of the calendar range")
-            return []
+        if start_dt.date() < self.calendar.index[0] or end_dt.date() > self.calendar.index[-1]:  # timestamp is outside of the calendar range
+            logger.error(f"Start time {start_dt} or end time {end_dt} is outside of the calendar range")
+            return [], []
         if timeframe in ['m60', 'm30', 'm15', 'm5', 'm1']:
             period_s = int(timeframe[1:])*60
-            candle_count = (end_time - start_time).total_seconds()/period_s + 1
+            candle_count = (end_dt - start_dt).total_seconds()/period_s + 1
         elif timeframe=='d':
-            candle_count = (end_time - start_time).days + 1
+            candle_count = (end_dt - start_dt).days + 1
         elif timeframe=='w':
-            candle_count = (end_time - start_time).days//7 + 1
+            candle_count = (end_dt - start_dt).days//7 + 1
         elif timeframe=='m':
-            candle_count = (end_time.year - start_time.year)*12 + end_time.month - start_time.month + 1
+            candle_count = (end_dt.year - start_dt.year)*12 + end_dt.month - start_dt.month + 1
         elif timeframe=='q':
-            candle_count = (end_time.year - start_time.year)*4 + (end_time.month-1)//3 - (start_time.month-1)//3 + 1
+            candle_count = (end_dt.year - start_dt.year)*4 + (end_dt.month-1)//3 - (start_dt.month-1)//3 + 1
         elif timeframe=='y':
-            candle_count = end_time.year - start_time.year + 1
+            candle_count = end_dt.year - start_dt.year + 1
         else:
             raise ValueError(f"Unsupported timeframe: {timeframe}. Supported timeframes are: {SUPPORTED_TIMEFRAMES}")
         candle_count = int(candle_count)
         candle_list = []
-        candle_list_candidate = self.getCandleOpenCloseTime(start_time.timestamp(), timeframe, n_post=candle_count)
+        candle_list_candidate = self.getCandleOpenCloseTime(start_dt.timestamp(), timeframe, n_post=candle_count)
         if candle_list_candidate['current']:
             candle_list.extend([candle_list_candidate['current']])
         candle_list.extend(candle_list_candidate['post'])
-        candle_list_open  = [c[0] for c in candle_list if (c[0] >= start_time and c[1] <= end_time)]
-        candle_list_close = [c[1] for c in candle_list if (c[0] >= start_time and c[1] <= end_time)]
+        candle_list_open  = [c[0] for c in candle_list if (c[0] >= start_dt and c[1] <= end_dt)]
+        candle_list_close = [c[1] for c in candle_list if (c[0] >= start_dt and c[1] <= end_dt)]
         return candle_list_open, candle_list_close
     
 if __name__ == "__main__":

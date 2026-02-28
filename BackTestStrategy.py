@@ -388,6 +388,8 @@ class BackTestStrategy:
                     trade['stop'] = chartDictNew['d'][-2].high
             return trade['stop'], exitComment
         elif self.name == "StratLab2dGM":
+            if intradayCandles is None:
+                raise ValueError("intradayCandles is required for StratLab2dGM strategy")
             exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
             if trade['direction'] == util.TickerStatus.LONG:
                 if trade['daysOpen'] == 0:

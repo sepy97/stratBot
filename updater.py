@@ -52,7 +52,7 @@ class Updater:
         watchlist_from_file = util.tomlkit.loads(util.Path("config.toml").read_text())
         found = False
         if "watchlist" in watchlist_from_file:
-            for element in watchlist_from_file["watchlist"]:
+            for element in watchlist_from_file["watchlist"]:  # type: ignore[union-attr]
                 if element["symbol"] == symbol:
                     found = True
                     break
@@ -68,8 +68,8 @@ class Updater:
         if symbol in self.scheduled_jobs:
             print("Job for symbol ", symbol, " is already scheduled")
         else:
-            t = ticker.Ticker(symbol, self.TDSession)
-            self.sched.add_job(lambda:t.update(self.strategy), self.trigger, id=symbol)
+            t = Ticker.Ticker(symbol, self.TDSession)  # type: ignore[call-issue]
+            self.sched.add_job(lambda:t.update(self.strategy), self.trigger, id=symbol)  # type: ignore[call-issue]
             self.scheduled_jobs.append(symbol)
 
     def pauseScheduler(self):
@@ -80,8 +80,8 @@ class Updater:
 
     def loadStrategy(self, name):
         strat_dic = util.tomlkit.loads(util.Path("config.toml").read_text())["strategies"]
-        for element in strat_dic:
+        for element in strat_dic:  # type: ignore[union-attr]
             if element["name"] == name:
-                self.strategy = strategy.Strategy(name, element["type"], element["patterns"], element["tfc"], element["exit"])
+                self.strategy = strategy.Strategy(name)
                 return True
         print("Strategy not found")

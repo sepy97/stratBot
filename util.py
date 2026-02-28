@@ -8,7 +8,7 @@
 
 #import pandas as pd
 #import pandas_market_calendars as mcal
-from datetime import datetime, timedelta
+from datetime import datetime
 #from dateutil.relativedelta import relativedelta
 
 import tomlkit
@@ -36,8 +36,8 @@ class strat_logger:
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT
-#timeframe_LUT = {'y': (365*24*60*60*1000, "year", "yearly", 1), 'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
-#timeframe_LUT = {'q': (91*24*60*60*1000, "year", "monthly", 1), 'm': (30*24*60*60*1000, "year", "monthly", 1), 'w': (7*24*60*60*1000, "month", "weekly", 1), 'd': (24*60*60*1000, "month", "daily", 1), 'm60': (60*60*1000, "day", "minute", 30), 'm30': (30*60*1000, "day", "minute", 30), 'm15': (15*60*1000, "day", "minute", 15), 'm5': (5*60*1000, "day", "minute", 5)}
+#timeframe_LUT = {'y': (365*24*60*60, "year", "yearly", 1), 'q': (91*24*60*60, "year", "monthly", 1), 'm': (30*24*60*60, "year", "monthly", 1), 'w': (7*24*60*60, "month", "weekly", 1), 'd': (24*60*60, "month", "daily", 1), 'm60': (60*60, "day", "minute", 30), 'm30': (30*60, "day", "minute", 30), 'm15': (15*60, "day", "minute", 15), 'm5': (5*60, "day", "minute", 5)}
+#timeframe_LUT = {'q': (91*24*60*60, "year", "monthly", 1), 'm': (30*24*60*60, "year", "monthly", 1), 'w': (7*24*60*60, "month", "weekly", 1), 'd': (24*60*60, "month", "daily", 1), 'm60': (60*60, "day", "minute", 30), 'm30': (30*60, "day", "minute", 30), 'm15': (15*60, "day", "minute", 15), 'm5': (5*60, "day", "minute", 5)}
 
 request_retry_num = 10
 
@@ -54,7 +54,7 @@ def loadSymbols():
 
     dic = tomlkit.loads(Path("config.toml").read_text())
     if "watchlist" in dic:
-        for element in dic["watchlist"]:
+        for element in dic["watchlist"]:  # type: ignore[union-attr]
             symbols.append(element["symbol"])
     else:
         print("No watchlist in config.toml!!!")
@@ -63,7 +63,7 @@ def loadSymbols():
 def moveLogs(destPath=None, tzone="America/Los_Angeles"):
     if destPath is None:
         dic = tomlkit.loads(Path("config.toml").read_text())
-        destPath = dic["paths"]["logs"]
+        destPath = str(dic["paths"]["logs"])  # type: ignore[index]
     dt = datetime.now(tz=pytz.timezone(tzone))
     cloudDir = str(destPath+dt.strftime("%Y-%m-%d")+"/"+dt.strftime("%H.%M.%S"))
     os.system("mkdir -p "+cloudDir)
