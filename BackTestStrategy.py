@@ -388,12 +388,14 @@ class BackTestStrategy:
                     trade['stop'] = chartDictNew['d'][-2].high
             return trade['stop'], exitComment
         elif self.name == "StratLab2dGM":
-            if intradayCandles is None:
-                raise ValueError("intradayCandles is required for StratLab2dGM strategy")
             exitComment = exitComment + "Exit pattern: " + chartDictNew['d'][-2].to_string() + "-" + chartDictNew['d'][-1].to_string()
             if trade['direction'] == util.TickerStatus.LONG:
                 if trade['daysOpen'] == 0:
-                    trade['stop'] = min(candle.low for candle in intradayCandles[:entryID+1])    # low of day on the day of entry
+                    if intradayCandles is None:
+                        # live trading: live daily candle already tracks the running intraday low
+                        trade['stop'] = chartDictNew['d'][-1].low
+                    else:
+                        trade['stop'] = min(candle.low for candle in intradayCandles[:entryID+1])    # low of day on the day of entry
                 elif trade['daysOpen'] >= 2:
                     trade['stop'] = max(trade['stop'], trade['entryPrice'], chartDictNew['d'][-2].low)  # move stop up to previous D low or entry price, whichever is higher
                 elif trade['daysOpen'] == 1:

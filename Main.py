@@ -3,6 +3,7 @@ import os
 from apscheduler.schedulers.background import BackgroundScheduler
 import queue
 import time
+import pandas as pd
 from alpaca.data import StockHistoricalDataClient
 
 from datetime import datetime, timedelta
@@ -38,9 +39,8 @@ if __name__ == '__main__':
     # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
     # Set up unified logging (routes all loggers to live_trading.log + console + per-ticker strat_<symbol>.log)
     log_queue, log_proc = log_functions.start_logging_process(log_functions.log_init("live_trading.log"))
-
-    # load watchlist from config file
-    #watchlist = util.loadSymbols()
+    # load watchlist from csv (same file used by backtester)
+    watchlist = pd.read_csv('Watchlists/NASDAQ100_2025.csv', header=None)[0].to_list()
     watchlist = ["TSLA", "AAPL", "QQQ", "SQQQ"]
     session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
     market_time_manager = mtm.MarketTimeManager()
@@ -51,11 +51,8 @@ if __name__ == '__main__':
     DR_queue = queue.Queue()
     DR_condition = threading.Condition()
     # there are multiple ticker queues, one queue for each ticker in the watchlist
-    ticker_queues = []
+    ticker_queues = {symbol: queue.Queue() for symbol in watchlist}
     ticker_condition = threading.Condition()
-    for t in watchlist:
-        # each element of the ticker queue is the current (for the time period) price that DR receives
-        ticker_queues.append(queue.Queue())
     # broker queue contains symbols that should be traded
     broker_queue = queue.Queue()
     broker_condition = threading.Condition()
@@ -76,12 +73,18 @@ if __name__ == '__main__':
 
     # get tickers from watchlist, create an iterable collection of threads, and start threads for each ticker
     tickers = []
+    valid_watchlist = []
     for symbol in watchlist:
-        t = Ticker(symbol, ticker_queues[watchlist.index(symbol)], TF, broker_queue, ticker_condition, TF_condition, broker_condition, daemon=True)
-        t.strategies.append(BackTestStrategy("BasicDailyAS"))
         data = data_retriever.get_initial_data(symbol, ["m5", "m15", "m30", "m60", "d", "w", "m", "q"])
+        if data is None:
+            continue
+        t = Ticker(symbol, ticker_queues[symbol], TF, broker_queue, ticker_condition, TF_condition, broker_condition, daemon=True)
+        t.strategies.append(BackTestStrategy("BasicDailyAS"))
+        t.strategies.append(BackTestStrategy("StratLab2dGM"))
         t.initializeCandles(data)
         tickers.append(t)
+        valid_watchlist.append(symbol)
+    print(f"Initialized {len(valid_watchlist)}/{len(watchlist)} symbols successfully.")
     for t in tickers:
         # each thread should first initialize the ticker, then start waiting for the signal from the data retriever
         t.start()
@@ -91,7 +94,7 @@ if __name__ == '__main__':
     proper_start_time = market_time_manager.getProperStartTime(datetime.now(), time_quant)
     print(f"Proper start time: {proper_start_time}")
     print(f"Opening time: {datetime.fromtimestamp(market_time_manager.getTodayOpenTime())}")
-    scheduler.add_job(lambda:scheduling(watchlist, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
+    scheduler.add_job(lambda:scheduling(valid_watchlist, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
     scheduler.start()
 
     time.sleep(6000)

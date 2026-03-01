@@ -1,4 +1,7 @@
 import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Broker(threading.Thread):
@@ -28,5 +31,5 @@ class Broker(threading.Thread):
                 direction = order.get('direction')
                 dir_name  = direction.name if direction else ''
                 # TODO: place actual Alpaca paper-account order here
-                print(f"Broker: {action} {symbol} {dir_name} @ {price}", flush=True)
+                logger.info(f"Broker: {action} {symbol} {dir_name} @ {price}")
         return

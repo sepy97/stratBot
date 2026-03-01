@@ -1,9 +1,12 @@
 import threading
+import logging
 
 import alpaca.data.enums
 from alpaca.data import StockLatestBarRequest, TimeFrame, TimeFrameUnit
 from alpaca.data.requests import StockBarsRequest
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 class DataRetrieval(threading.Thread):
     def __init__(self, session, watchlist, input_queue, output_queues, DR_condition, ticker_condition, *args, **kwargs):
@@ -36,7 +39,7 @@ class DataRetrieval(threading.Thread):
             # for now, bar data is being put into the output queues in a for-loop
             # TODO: Use map function to put bar data into output queues
             for symbol in self.watchlist:
-                self.output_queues[self.watchlist.index(symbol)].put(bar[symbol].close)
+                self.output_queues[symbol].put(bar[symbol])
             # map(lambda s: self.output_queues[self.watchlist.index(s)].put(s), self.watchlist)
             with self.ticker_condition:
                 self.ticker_condition.notify_all()
@@ -44,6 +47,7 @@ class DataRetrieval(threading.Thread):
 
     def get_initial_data(self, symbol, tfs):
         # request Stock Bars for the last 3 periods for each timeframe
+        # Returns None if data is unavailable for any timeframe (symbol will be skipped by caller)
         curdatetime = datetime.now()
         bars = {}
         for tf in tfs:
@@ -83,9 +87,16 @@ class DataRetrieval(threading.Thread):
                     startdate = curdatetime - timedelta(days=5*90) # 5 quarters ago
                 case _:
                     raise ValueError(f"Unknown timeframe: {tf}")
-            #TODO: check if timeframe is correct
-            request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=timeframe, start=startdate, end=enddate, limit=None, adjustment=None, feed=None)
-            data = self.session.get_stock_bars(request_params)[symbol]
+            try:
+                request_params = StockBarsRequest(symbol_or_symbols=symbol, timeframe=timeframe, start=startdate, end=enddate, limit=None, adjustment=None, feed=None)
+                response = self.session.get_stock_bars(request_params)
+                data = response[symbol]
+                if data is None or len(data) < 4:
+                    logger.warning(f"Insufficient bar data for {symbol} at timeframe {tf} (got {len(data) if data else 0} bars, need 4). Skipping symbol.")
+                    return None
+            except Exception as e:
+                logger.warning(f"Failed to get bar data for {symbol} at timeframe {tf}: {e}. Skipping symbol.")
+                return None
             bars[tf] = data[-4:]
 
         return bars
