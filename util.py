@@ -16,23 +16,8 @@ from pathlib import Path
 
 from enum import Enum
 
-import logging
 import pytz
 import os
-
-class strat_logger:
-    def __init__(self, name, log_file='strat.log'):
-        self.logger = logging.getLogger(name)
-        self.logger.setLevel(logging.DEBUG)
-        # create a file handler
-        handler = logging.FileHandler(log_file)
-        # This level is responsible for the output to the file
-        handler.setLevel(logging.DEBUG)#(logging.INFO)
-        # create a logging format
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        # add the handlers to the logger
-        self.logger.addHandler(handler)
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT

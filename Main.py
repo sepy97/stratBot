@@ -13,6 +13,7 @@ from Broker import Broker
 from DataRetrieval import DataRetrieval
 from Ticker import Ticker
 from BackTestStrategy import BackTestStrategy
+import log_functions
 
 def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant=5):
     current_time = datetime.now()
@@ -33,6 +34,9 @@ def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, market_time_ma
 # entry point for the program
 if __name__ == '__main__':
     # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
+    # Set up unified logging (routes all loggers to live_trading.log + console + per-ticker strat_<symbol>.log)
+    log_queue, log_proc = log_functions.start_logging_process(log_functions.log_init("live_trading.log"))
+
     # load watchlist from config file
     #watchlist = util.loadSymbols()
     watchlist = ["TSLA", "AAPL", "QQQ", "SQQQ"]
@@ -102,3 +106,4 @@ if __name__ == '__main__':
     util.moveLogs()
     print ("FINISHING the scheduler!")
     scheduler.shutdown(wait=False)
+    log_functions.stop_logging_process(log_queue, log_proc)

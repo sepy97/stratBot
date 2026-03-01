@@ -12,6 +12,8 @@ class SimpleQueueHandler(logging.Handler):
 
     def emit(self, record):
         try:
+            record.msg = record.getMessage()
+            record.args = None
             self.queue.put(record)
         except Exception:
             self.handleError(record)
@@ -52,6 +54,8 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
     root.handlers = [console_handler, file_handler]
     root.setLevel(logging.DEBUG)
 
+    ticker_handlers: dict = {}  # symbol -> FileHandler for per-ticker log files
+
     while True:
         try:
             record = log_queue.get()  # block until record
@@ -64,6 +68,15 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
         try:
             # NOTE: record is already a LogRecord instance sent via QueueHandler
             root.handle(record)
+            # Route Ticker.<symbol> loggers to per-ticker files
+            if record.name.startswith("Ticker."):
+                symbol = record.name.split(".", 1)[1]
+                if symbol not in ticker_handlers:
+                    h = logging.FileHandler(f"strat_{symbol}.log", mode='a')
+                    h.setFormatter(formatter)
+                    h.setLevel(logging.DEBUG)
+                    ticker_handlers[symbol] = h
+                ticker_handlers[symbol].emit(record)
         except Exception:
             # Avoid crashing the logging process: print exception and continue
             import traceback
@@ -77,6 +90,11 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
             h.close()
     except Exception:
         pass
+    for h in ticker_handlers.values():
+        try:
+            h.close()
+        except Exception:
+            pass
 
 def start_logging_process(config):
     """
@@ -91,6 +109,9 @@ def start_logging_process(config):
     root = logging.getLogger()
     root.handlers = [queue_handler]
     root.setLevel(logging.DEBUG)
+
+    # Suppress noisy per-cycle APScheduler INFO lines; only keep warnings and errors
+    logging.getLogger('apscheduler').setLevel(logging.WARNING)
 
     # Dedicated logging process
     log_proc = mp.Process(
@@ -146,8 +167,8 @@ def _worker(symbol):
     return 42
 
 if __name__ == "__main__":
-    log_queue, listener = log_init("test_log.log")
-    listener.start()
+    log_config = log_init("test_log.log")
+    log_queue, log_proc = start_logging_process(log_config)
     for h in logging.getLogger().handlers:
         print(h, h.level)
     logger = logging.getLogger(__name__)
@@ -155,8 +176,8 @@ if __name__ == "__main__":
     logger.debug("Debug message from main process")
     symbol_valid = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']
     with mp.Pool(processes=4, initializer=_init_pool, initargs=(log_queue, )) as pool:
-            total_result = pool.starmap(_worker, [(sym, ) for sym in symbol_valid])  
+            total_result = pool.starmap(_worker, [(sym, ) for sym in symbol_valid])
     sleep(1)
     logger.info("Main process finished")
     logger.debug("Debug message from main process before stopping listener")
-    listener.stop()
+    stop_logging_process(log_queue, log_proc)

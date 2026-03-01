@@ -1,4 +1,5 @@
 import threading
+import logging
 from datetime import datetime
 import util
 from candles import Candle
@@ -25,8 +26,8 @@ class Ticker(threading.Thread):
         self.stopPrice = 0.0
         self.targetPrice = 0.0
         self.strategies = []
-        self.logger = util.strat_logger("Ticker_"+self.symbol, "strat_"+self.symbol+".log")
-        self.logger.logger.debug("Ticker created: " + str(self))
+        self.logger = logging.getLogger("Ticker." + self.symbol)
+        self.logger.debug("Ticker created: " + str(self))
 
     def stopThr(self):
         self._stopper.set()
@@ -46,7 +47,7 @@ class Ticker(threading.Thread):
             # waiting for update signal from the main thread (scheduler) about timeframe flips
             with self.TF_condition:
                 self.TF_condition.wait()
-            self.logger.logger.debug("Received quote: " + str(quote))
+            self.logger.debug("Received quote: " + str(quote))
             self.update(quote, update_time.timestamp())
             dumpstr = f"Ticker {self.symbol} has candles at time {update_time}: "
             for t in self.candles:
@@ -55,7 +56,7 @@ class Ticker(threading.Thread):
                     dumpstr += f"{c} "
                 dumpstr += "\n"
             self.lastUpdated = update_time
-            self.logger.logger.debug(dumpstr)
+            self.logger.debug(dumpstr)
             # Build chartDictNew: reverse live candle order to match BackTestStrategy indexing
             # BackTestStrategy: [-1]=current, [-2]=prev; live candles: [0]=current, [1]=prev
             chart = {}
@@ -71,7 +72,7 @@ class Ticker(threading.Thread):
                             triggerPrice, direction = trade[0], trade[1]
                             self.status = direction
                             self.entryPrice = triggerPrice
-                            self.logger.logger.info(
+                            self.logger.info(
                                 f"ENTRY SIGNAL: {self.symbol} {direction.name} at trigger {triggerPrice}"
                             )
                             self.output_queue.put(self.symbol)
@@ -81,7 +82,7 @@ class Ticker(threading.Thread):
                     if self.status != util.TickerStatus.OUT:
                         break
             else:
-                self.logger.logger.debug(f"{self.symbol} status={self.status.name}, no signal check needed")
+                self.logger.debug(f"{self.symbol} status={self.status.name}, no signal check needed")
         return
 
     def update(self, quote, timestamp):
