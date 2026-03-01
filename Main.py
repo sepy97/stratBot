@@ -1,4 +1,5 @@
 import threading
+import os
 from apscheduler.schedulers.background import BackgroundScheduler
 import queue
 import time
@@ -13,6 +14,7 @@ from Broker import Broker
 from DataRetrieval import DataRetrieval
 from Ticker import Ticker
 from BackTestStrategy import BackTestStrategy
+from BackTester import printTradeDict
 import log_functions
 
 def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant=5):
@@ -102,6 +104,15 @@ if __name__ == '__main__':
     for t in tickers:
         # save the state of each ticker?
         t.stopThr()
+    # export all trades (completed + still-open) to CSV
+    all_trades = {
+        t.symbol: [trade.data for trade in t.trade_history + t.active_trades]
+        for t in tickers
+    }
+    if any(all_trades.values()):
+        os.makedirs("Trades", exist_ok=True)
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        printTradeDict(all_trades, f"Trades/live_trades_{ts}.csv")
     print("Moving logs...")
     util.moveLogs()
     print ("FINISHING the scheduler!")
