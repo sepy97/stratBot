@@ -1,6 +1,6 @@
 import threading
 
-# TODO: add broker API to perform trades (on the paper account for now)
+
 class Broker(threading.Thread):
     def __init__(self, input_queue, broker_condition, *args, **kwargs):
         super(Broker, self).__init__(*args, **kwargs)
@@ -21,6 +21,12 @@ class Broker(threading.Thread):
             with self.broker_condition:
                 self.broker_condition.wait()
             while not self.input_queue.empty():
-                symbol = self.input_queue.get(timeout=1)
-                #print(f"Broker got {symbol}", flush=True)
+                order = self.input_queue.get(timeout=1)
+                action    = order.get('action', '')
+                symbol    = order.get('symbol', '')
+                price     = order.get('price', 0)
+                direction = order.get('direction')
+                dir_name  = direction.name if direction else ''
+                # TODO: place actual Alpaca paper-account order here
+                print(f"Broker: {action} {symbol} {dir_name} @ {price}", flush=True)
         return

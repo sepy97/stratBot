@@ -1,0 +1,146 @@
+import util
+import time as _time
+
+
+class Trade:
+    """
+    Represents a single live trade. Mirrors the backtester trade dictionary.
+    One Ticker may have multiple Trade objects active at once.
+
+    self.data holds the same fields used by the backtester trade dict so that
+    BackTestStrategy.getStop() and related functions work unchanged.
+    """
+
+    def __init__(self, symbol, triggerPrice, direction, chart, strategy):
+        tgt = float('inf') if direction == util.TickerStatus.LONG else 0.0
+        self.data = {
+            'symbol': symbol,
+            'entryPrice': triggerPrice,
+            'entryTimestamp_sec': int(_time.time()),
+            'daysOpen': 0,
+            'direction': direction,
+            'exitPrice': -1,
+            'exitTimestamp_sec': -1,
+            'stop type': '',
+            'target': tgt,
+            'exit_comment': '',
+        }
+        self._record_combos(chart, triggerPrice, direction)
+        self._init_stop(chart, strategy)
+
+    # ── active trade management ───────────────────────────────────────────────
+
+    def update_stop(self, chart, chart_old, strategy):
+        """
+        Call on each daily candle flip while the trade is open.
+        Mirrors BackTester.updateTrade() (without intraday exit scan).
+        """
+        self.data['daysOpen'] += 1
+        result = strategy.getStop(chart, chart_old, self.data)
+        self.data['stop'] = result[0]
+        self.data['exit_comment'] = result[1]
+        if len(result) > 2:
+            self.data['target'] = result[2]
+
+    def check_exit(self, bar_high, bar_low, timestamp):
+        """
+        Check bar high/low against stop and target.
+        Returns True if the trade was closed, False otherwise.
+        Updates self.data in place on exit.
+        """
+        d = self.data
+        exited = False
+        if d['direction'] == util.TickerStatus.LONG:
+            if bar_low <= d['stop']:
+                d['stop type'] = "stop hit"
+                d['exitPrice'] = d['stop']
+                exited = True
+            elif bar_high >= d['target']:
+                d['stop type'] = "target hit"
+                d['exitPrice'] = d['target']
+                exited = True
+        else:
+            if bar_high >= d['stop']:
+                d['stop type'] = "stop hit"
+                d['exitPrice'] = d['stop']
+                exited = True
+            elif bar_low <= d['target']:
+                d['stop type'] = "target hit"
+                d['exitPrice'] = d['target']
+                exited = True
+        if exited:
+            d['exitTimestamp_sec'] = int(timestamp)
+            d['gain %'] = self._calc_gain()
+        return exited
+
+    # ── properties ────────────────────────────────────────────────────────────
+
+    @property
+    def is_open(self):
+        return self.data['exitPrice'] == -1
+
+    @property
+    def stop(self):
+        return self.data['stop']
+
+    @property
+    def direction(self):
+        return self.data['direction']
+
+    # ── private helpers ───────────────────────────────────────────────────────
+
+    def _init_stop(self, chart, strategy):
+        """Get initial stop from strategy and compute RR. chartDictOld is None
+        because at entry time we don't have a separate old-chart snapshot; the
+        strategies used here (BasicDailyAS etc.) don't read chartDictOld for
+        the initial stop anyway."""
+        result = strategy.getStop(chart, None, self.data)
+        self.data['stop'] = result[0]
+        self.data['initial stop'] = result[0]
+        self.data['initialStop'] = result[0]
+        self.data['exit_comment'] = result[1]
+        if len(result) > 2:
+            self.data['target'] = result[2]
+        denom = self.data['entryPrice'] - self.data['stop']
+        self.data['RR'] = (
+            (self.data['target'] - self.data['entryPrice']) / denom
+            if denom != 0 else float('inf')
+        )
+
+    def _record_combos(self, chart, triggerPrice, direction):
+        """
+        Record candle combo strings and TFC for all timeframes present in chart.
+        Mirrors the combo-recording block in BackTester.enterTrade().
+        Uses the live (partially-formed) candle at index [-1] as the entry candle.
+        """
+        adj = 0.01 if direction == util.TickerStatus.LONG else -0.01
+        entry_adj = triggerPrice + adj
+        for tf, cdls in chart.items():
+            if len(cdls) >= 3:
+                self.data[tf] = (
+                    cdls[-3].to_string() + "-" +
+                    cdls[-2].to_string() + "-" +
+                    cdls[-1].to_string()
+                )
+                self.data[tf + " combo"] = (
+                    cdls[-3].get_kind() + cdls[-3].get_subtype() + "-" +
+                    cdls[-2].get_kind() + cdls[-2].get_subtype() + "-" +
+                    cdls[-1].get_kind() + cdls[-1].get_subtype()
+                )
+            elif len(cdls) == 2:
+                self.data[tf] = cdls[-2].to_string() + "-" + cdls[-1].to_string()
+                self.data[tf + " combo"] = (
+                    cdls[-2].get_kind() + cdls[-2].get_subtype() + "-" +
+                    cdls[-1].get_kind() + cdls[-1].get_subtype()
+                )
+            self.data["TFC " + tf] = "G" if entry_adj > cdls[-1].open else "R"
+        if 'd' in chart and len(chart['d']) >= 2:
+            self.data["Prev D pattern"] = chart['d'][-2].get_pattern()
+
+    def _calc_gain(self):
+        ep = self.data['exitPrice']
+        if ep == -1:
+            return None
+        if self.data['direction'] == util.TickerStatus.LONG:
+            return 100 * (ep / self.data['entryPrice'] - 1)
+        return 100 * (1 - ep / self.data['entryPrice'])

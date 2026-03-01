@@ -3,6 +3,8 @@ import logging
 from datetime import datetime
 import util
 from candles import Candle
+from Trade import Trade
+
 
 class Ticker(threading.Thread):
     # Ticker with history at multiple time frames
@@ -21,10 +23,8 @@ class Ticker(threading.Thread):
         self.ticker_condition = ticker_condition
         self.TF_condition = TF_condition
         self.broker_condition = broker_condition
-        self.status = util.TickerStatus.OUT
-        self.entryPrice = 0.0
-        self.stopPrice = 0.0
-        self.targetPrice = 0.0
+        self.active_trades = []     # Trade objects currently open for this symbol
+        self.trade_history = []     # completed Trade objects
         self.strategies = []
         self.logger = logging.getLogger("Ticker." + self.symbol)
         self.logger.debug("Ticker created: " + str(self))
@@ -43,12 +43,22 @@ class Ticker(threading.Thread):
             with self.ticker_condition:
                 self.ticker_condition.wait()
             update_time = datetime.now()
-            quote = self.input_queue.get(timeout=1)
+            bar = self.input_queue.get(timeout=1)
             # waiting for update signal from the main thread (scheduler) about timeframe flips
             with self.TF_condition:
                 self.TF_condition.wait()
-            self.logger.debug("Received quote: " + str(quote))
-            self.update(quote, update_time.timestamp())
+            self.logger.debug("Received bar: " + str(bar))
+
+            # Snapshot chart BEFORE update so getStop can compare old vs new
+            chart_old = {
+                tf: list(reversed(self.candles[tf]))
+                for tf in ['d', 'w', 'm', 'q']
+                if tf in self.candles and self.candles[tf] is not None
+            }
+            daily_flipped = self.TF.get('d', False)
+
+            self.update(bar, update_time.timestamp())
+
             dumpstr = f"Ticker {self.symbol} has candles at time {update_time}: "
             for t in self.candles:
                 dumpstr += f"{t}:"
@@ -57,44 +67,79 @@ class Ticker(threading.Thread):
                 dumpstr += "\n"
             self.lastUpdated = update_time
             self.logger.debug(dumpstr)
+
             # Build chartDictNew: reverse live candle order to match BackTestStrategy indexing
             # BackTestStrategy: [-1]=current, [-2]=prev; live candles: [0]=current, [1]=prev
-            chart = {}
-            for tf in ['d', 'w', 'm', 'q']:
-                if tf in self.candles and self.candles[tf] is not None:
-                    chart[tf] = list(reversed(self.candles[tf]))
+            chart = {
+                tf: list(reversed(self.candles[tf]))
+                for tf in ['d', 'w', 'm', 'q']
+                if tf in self.candles and self.candles[tf] is not None
+            }
 
-            if self.status == util.TickerStatus.OUT and len(chart.get('d', [])) >= 2:
+            # 1. On daily candle flip: update stop for all open trades
+            if daily_flipped:
+                for trade in self.active_trades:
+                    for s in self.strategies:
+                        trade.update_stop(chart, chart_old, s)
+                        break  # one strategy per trade
+                self.logger.info(
+                    f"{self.symbol}: daily flip, {len(self.active_trades)} open trade(s) updated"
+                )
+
+            # 2. Check exit conditions for all open trades against bar high/low
+            closed = []
+            for trade in self.active_trades:
+                if trade.check_exit(bar.high, bar.low, update_time.timestamp()):
+                    closed.append(trade)
+                    self.trade_history.append(trade)
+                    self.output_queue.put({
+                        'action': 'EXIT',
+                        'symbol': self.symbol,
+                        'price': trade.data['exitPrice'],
+                        'direction': trade.direction,
+                    })
+                    with self.broker_condition:
+                        self.broker_condition.notify()
+                    self.logger.info(
+                        f"EXIT {self.symbol}: {trade.data['stop type']} "
+                        f"@ {trade.data['exitPrice']:.2f}, "
+                        f"gain={trade.data['gain %']:.2f}%"
+                    )
+            for t in closed:
+                self.active_trades.remove(t)
+
+            # 3. Check for new entry signals (checked every update, regardless of open trades)
+            if len(chart.get('d', [])) >= 2:
                 for s in self.strategies:
                     if s.screenTrade(chart, None):
-                        trades = s.getNewTrade(chart, None)
-                        for trade in trades:
-                            triggerPrice, direction = trade[0], trade[1]
-                            self.status = direction
-                            self.entryPrice = triggerPrice
-                            self.logger.info(
-                                f"ENTRY SIGNAL: {self.symbol} {direction.name} at trigger {triggerPrice}"
-                            )
-                            self.output_queue.put(self.symbol)
+                        trade_list = s.getNewTrade(chart, None)
+                        for t in trade_list:
+                            triggerPrice, direction = t[0], t[1]
+                            new_trade = Trade(self.symbol, triggerPrice, direction, chart, s)
+                            self.active_trades.append(new_trade)
+                            self.output_queue.put({
+                                'action': 'ENTRY',
+                                'symbol': self.symbol,
+                                'price': triggerPrice,
+                                'direction': direction,
+                            })
                             with self.broker_condition:
                                 self.broker_condition.notify()
-                            break
-                    if self.status != util.TickerStatus.OUT:
-                        break
-            else:
-                self.logger.debug(f"{self.symbol} status={self.status.name}, no signal check needed")
+                            self.logger.info(
+                                f"ENTRY {self.symbol} {direction.name} @ {triggerPrice}, "
+                                f"stop={new_trade.stop:.2f}, RR={new_trade.data['RR']:.2f}"
+                            )
         return
 
-    def update(self, quote, timestamp):
-        # TODO: description
+    def update(self, bar, timestamp):
         # update close prices (for live candles from the ticker) using the market price
-        self.updateClose(quote)
-        # update (if necessary) high and low of live candles
-        self.updateHighLow(quote)
+        self.updateClose(bar.close)
+        # update high and low of live candles using the bar's actual high/low
+        self.updateHighLow(bar.high, bar.low)
         # create new candles (if necessary; based on the current timeframe)
-        self.createCandle(quote, timestamp)
+        self.createCandle(bar.close, timestamp)
 
-    def createCandle (self, price, timestamp):
+    def createCandle(self, price, timestamp):
         # Insert new candle into the candle list if necessary (if timeframe is flipped)
         for tf in self.TF:
             if self.TF[tf]:
@@ -106,12 +151,6 @@ class Ticker(threading.Thread):
                 newCandle = Candle(timestamp, price, price, price, price, prev_high, prev_low)
                 candles.insert(0, newCandle)
                 candles.pop()
-                # @@@ TODO: WHY?
-                # Reset entry state at the start of each new trading day
-                if tf == 'd':
-                    self.status = util.TickerStatus.OUT
-                    self.entryPrice = 0.0
-
 
     def updateClose(self, close_price):
         # Update close prices of live candles
@@ -120,15 +159,15 @@ class Ticker(threading.Thread):
                 continue
             self.candles[t][0].close = close_price
 
-    def updateHighLow(self, price):
-        # Update high and low of live candles if necessary
+    def updateHighLow(self, high, low):
+        # Update high and low of live candles using the bar's actual high/low
         for t in self.candles.keys():
             if self.candles[t] is None:
                 continue
-            if price > self.candles[t][0].high:
-                self.candles[t][0].high = price
-            if price < self.candles[t][0].low:
-                self.candles[t][0].low = price
+            if high > self.candles[t][0].high:
+                self.candles[t][0].high = high
+            if low < self.candles[t][0].low:
+                self.candles[t][0].low = low
 
     def initializeCandles(self, bars):
         # Initialize candles for all timeframes
