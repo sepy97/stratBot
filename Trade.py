@@ -12,6 +12,7 @@ class Trade:
     """
 
     def __init__(self, symbol, triggerPrice, direction, chart, strategy):
+        self.strategy = strategy   # not in self.data so CSV export is unaffected
         tgt = float('inf') if direction == util.TickerStatus.LONG else 0.0
         self.data = {
             'symbol': symbol,
@@ -21,6 +22,7 @@ class Trade:
             'direction': direction,
             'exitPrice': -1,
             'exitTimestamp_sec': -1,
+            'gain %': -1,
             'stop type': '',
             'target': tgt,
             'exit_comment': '',
@@ -30,13 +32,12 @@ class Trade:
 
     # ── active trade management ───────────────────────────────────────────────
 
-    def update_stop(self, chart, chart_old, strategy):
+    def tighten_entry_stop(self, chart):
         """
-        Call on each daily candle flip while the trade is open.
-        Mirrors BackTester.updateTrade() (without intraday exit scan).
+        Delegate to the strategy's tighten_entry_stop and apply the result.
+        Also updates exit_comment and target when the strategy returns them.
         """
-        self.data['daysOpen'] += 1
-        result = strategy.getStop(chart, chart_old, self.data)
+        result = self.strategy.tighten_entry_stop(chart, self.data)
         self.data['stop'] = result[0]
         self.data['exit_comment'] = result[1]
         if len(result) > 2:
@@ -72,6 +73,14 @@ class Trade:
             d['exitTimestamp_sec'] = int(timestamp)
             d['gain %'] = self._calc_gain()
         return exited
+
+    def force_close(self, price, timestamp):
+        """Force-close the trade at the given price (e.g. at shutdown)."""
+        d = self.data
+        d['exitPrice'] = price
+        d['exitTimestamp_sec'] = int(timestamp)
+        d['stop type'] = 'forced close'
+        d['gain %'] = self._calc_gain()
 
     # ── properties ────────────────────────────────────────────────────────────
 
@@ -133,7 +142,8 @@ class Trade:
                     cdls[-2].get_kind() + cdls[-2].get_subtype() + "-" +
                     cdls[-1].get_kind() + cdls[-1].get_subtype()
                 )
-            self.data["TFC " + tf] = "G" if entry_adj > cdls[-1].open else "R"
+            if len(cdls) >= 1:
+                self.data["TFC " + tf] = "G" if entry_adj > cdls[-1].open else "R"
         if 'd' in chart and len(chart['d']) >= 2:
             self.data["Prev D pattern"] = chart['d'][-2].get_pattern()
 
