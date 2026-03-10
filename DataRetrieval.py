@@ -1,5 +1,6 @@
 import threading
 import logging
+import queue
 
 import alpaca.data.enums
 from alpaca.data import StockLatestBarRequest, TimeFrame, TimeFrameUnit
@@ -32,13 +33,30 @@ class DataRetrieval(threading.Thread):
             # waiting for the signal from the main thread (scheduler)
             with self.DR_condition:
                 self.DR_condition.wait()
-            self.watchlist = self.input_queue.get(timeout=1)
-            # API request
+            try:
+                self.watchlist = self.input_queue.get(timeout=1)
+            except queue.Empty:
+                logger.warning("DataRetrieval: watchlist queue empty after notify, skipping tick")
+                continue
+            # API request with retry on connection errors
             request_params = StockLatestBarRequest(symbol_or_symbols=self.watchlist, feed=None)
-            bar = self.session.get_stock_latest_bar(request_params)
+            bar = None
+            for attempt in range(3):
+                try:
+                    bar = self.session.get_stock_latest_bar(request_params)
+                    break
+                except Exception as e:
+                    logger.warning(f"DataRetrieval: get_stock_latest_bar attempt {attempt + 1} failed: {e}")
+                    if attempt == 2:
+                        logger.error("DataRetrieval: all retries exhausted, skipping this tick")
+            if bar is None:
+                continue
             # for now, bar data is being put into the output queues in a for-loop
             # TODO: Use map function to put bar data into output queues
             for symbol in self.watchlist:
+                if symbol not in bar:
+                    logger.warning(f"DataRetrieval: no bar returned for {symbol} this tick, skipping")
+                    continue
                 self.output_queues[symbol].put(bar[symbol])
             # map(lambda s: self.output_queues[self.watchlist.index(s)].put(s), self.watchlist)
             with self.ticker_condition:
