@@ -46,18 +46,16 @@ class Ticker(threading.Thread):
             with self.ticker_condition:
                 self.ticker_condition.wait()
             update_time = datetime.now()
-            bar = self.input_queue.get(timeout=1)
+            try:
+                bar = self.input_queue.get(timeout=1)
+            except queue.Empty:
+                # DataRetrieval had no data for this symbol this tick — skip
+                continue
             # waiting for update signal from the main thread (scheduler) about timeframe flips
             with self.TF_condition:
                 self.TF_condition.wait()
             self.logger.debug("Received bar: " + str(bar))
 
-            # Snapshot chart BEFORE update so getStop can compare old vs new
-            chart_old = {
-                tf: list(reversed(self.candles[tf]))
-                for tf in ['d', 'w', 'm', 'q']
-                if tf in self.candles and self.candles[tf] is not None
-            }
             daily_flipped = self.TF.get('d', False)
 
             self.update(bar, update_time.timestamp())
@@ -79,17 +77,19 @@ class Ticker(threading.Thread):
                 if tf in self.candles and self.candles[tf] is not None
             }
 
-            # 1. On daily candle flip: update stop for all open trades
+            # 1. On daily candle flip: advance day count for all open trades
             if daily_flipped:
                 for trade in self.active_trades:
-                    for s in self.strategies:
-                        trade.update_stop(chart, chart_old, s)
-                        break  # one strategy per trade
+                    trade.data['daysOpen'] += 1
                 self.logger.info(
                     f"{self.symbol}: daily flip, {len(self.active_trades)} open trade(s) updated"
                 )
 
-            # 2. Check exit conditions for all open trades against bar high/low
+            # 2. Re-evaluate stop each tick and tighten if possible (never widen)
+            for trade in self.active_trades:
+                trade.tighten_entry_stop(chart)
+
+            # 3. Check exit conditions for all open trades against bar high/low
             closed = []
             for trade in self.active_trades:
                 if trade.check_exit(bar.high, bar.low, update_time.timestamp()):
@@ -112,13 +112,21 @@ class Ticker(threading.Thread):
             for t in closed:
                 self.active_trades.remove(t)
 
-            # 3. Check for new entry signals (checked every update, regardless of open trades)
+            # 4. Check for new entry signals (checked every update, regardless of open trades)
             if len(chart.get('d', [])) >= 2:
                 for s in self.strategies:
                     if s.screenTrade(chart, None):
                         trade_list = s.getNewTrade(chart, None)
                         for t in trade_list:
                             triggerPrice, direction = t[0], t[1]
+                            # Price confirmation: current bar must have actually reached the trigger level.
+                            if direction == util.TickerStatus.LONG  and bar.close < triggerPrice:
+                                continue
+                            if direction == util.TickerStatus.SHORT and bar.close > triggerPrice:
+                                continue
+                            # State check — already IN for this strategy; wait for exit.
+                            if any(tr.strategy is s for tr in self.active_trades):
+                                continue
                             new_trade = Trade(self.symbol, triggerPrice, direction, chart, s)
                             self.active_trades.append(new_trade)
                             self.output_queue.put({

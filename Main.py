@@ -149,7 +149,7 @@ if __name__ == '__main__':
         scheduler.add_job(lambda:scheduling(valid_watchlist, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
         scheduler.start()
 
-        time.sleep(3 * 60 * 60) # 3 hours in seconds
+        time.sleep(6 * 60 * 60) # 6 hours in seconds
 
         # Stop the scheduler first so no new ticks can fire during shutdown.
         # Must happen before force-closing trades to avoid the race where a
