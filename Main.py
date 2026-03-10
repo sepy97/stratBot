@@ -1,4 +1,5 @@
 import threading
+import logging
 import os
 from apscheduler.schedulers.background import BackgroundScheduler
 import queue
@@ -18,6 +19,9 @@ from strategy import Strategy
 from BackTester import printTradeDict
 import log_functions
 
+logger = logging.getLogger(__name__)
+trades_logger = logging.getLogger("trades")
+
 def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant=5):
     current_time = datetime.now()
     DR_queue.put(symbols)
@@ -34,9 +38,46 @@ def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, market_time_ma
     #print("Timeframe signal sent to all tickers", flush=True)
     return
 
+def log_session_summary(tickers):
+    """Log performance statistics for all closed trades in the session."""
+    all_closed = [trade for t in tickers for trade in t.trade_history]
+    if not all_closed:
+        trades_logger.info("Session summary: no closed trades.")
+        return
+
+    total = len(all_closed)
+    wins = sum(1 for tr in all_closed if (tr.data.get('gain %') or 0) > 0)
+    total_gain = sum(tr.data.get('gain %') or 0 for tr in all_closed)
+
+    by_strategy = {}
+    for tr in all_closed:
+        name = tr.strategy.name
+        by_strategy.setdefault(name, []).append(tr)
+
+    lines = [
+        "========================",
+        f"  Session summary:",
+        f"  Total trades : {total}",
+        f"  Win rate     : {100 * wins / total:.1f}%  ({wins}/{total})",
+        f"  Total gain   : {total_gain:.2f}%   avg: {total_gain / total:.2f}%",
+    ]
+    for strat_name, trades in by_strategy.items():
+        s_total = len(trades)
+        s_wins  = sum(1 for tr in trades if (tr.data.get('gain %') or 0) > 0)
+        s_gain  = sum(tr.data.get('gain %') or 0 for tr in trades)
+        lines.append(
+            f"  [{strat_name}] trades={s_total}, "
+            f"wins={s_wins} ({100 * s_wins / s_total:.1f}%), "
+            f"gain={s_gain:.2f}%, avg={s_gain / s_total:.2f}%"
+        )
+    lines.append("========================")
+    summary = "\n".join(lines)
+    trades_logger.info(summary)
+
 # entry point for the program
 if __name__ == '__main__':
     # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
+
     # Set up unified logging (routes all loggers to live_trading.log + console + per-ticker strat_<symbol>.log)
     log_queue, log_proc = log_functions.start_logging_process(log_functions.log_init("live_trading.log"))
 

@@ -1,9 +1,12 @@
 import threading
 import logging
+import queue
 from datetime import datetime
 import util
 from candles import Candle
 from Trade import Trade
+
+trades_logger = logging.getLogger("trades")
 
 
 class Ticker(threading.Thread):
@@ -43,11 +46,7 @@ class Ticker(threading.Thread):
             with self.ticker_condition:
                 self.ticker_condition.wait()
             update_time = datetime.now()
-            try:
-                bar = self.input_queue.get(timeout=1)
-            except queue.Empty:
-                # DataRetrieval had no data for this symbol this tick — skip
-                continue
+            bar = self.input_queue.get(timeout=1)
             # waiting for update signal from the main thread (scheduler) about timeframe flips
             with self.TF_condition:
                 self.TF_condition.wait()
@@ -104,10 +103,11 @@ class Ticker(threading.Thread):
                     })
                     with self.broker_condition:
                         self.broker_condition.notify()
-                    self.logger.info(
+                    trades_logger.info(
                         f"EXIT {self.symbol}: {trade.data['stop type']} "
                         f"@ {trade.data['exitPrice']:.2f}, "
-                        f"gain={trade.data['gain %']:.2f}%"
+                        f"gain={trade.data['gain %']:.2f}%, "
+                        f"strategy={trade.strategy.name}"
                     )
             for t in closed:
                 self.active_trades.remove(t)
@@ -129,9 +129,10 @@ class Ticker(threading.Thread):
                             })
                             with self.broker_condition:
                                 self.broker_condition.notify()
-                            self.logger.info(
+                            trades_logger.info(
                                 f"ENTRY {self.symbol} {direction.name} @ {triggerPrice}, "
-                                f"stop={new_trade.stop:.2f}, RR={new_trade.data['RR']:.2f}"
+                                f"stop={new_trade.stop:.2f}, RR={new_trade.data['RR']:.2f}, "
+                                f"strategy={s.name}"
                             )
         return
 

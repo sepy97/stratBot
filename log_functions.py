@@ -18,14 +18,15 @@ class SimpleQueueHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
-def log_init(log_file="strat_bot.log"):
+def log_init(log_file="strat_bot.log", trades_file="trades.log"):
     """
     Returns a pure config object (picklable) used by the logging process
-    to construct handlers. Avoids passing actual handler objects across 
+    to construct handlers. Avoids passing actual handler objects across
     processes, which is unsafe.
     """
     return {
         "log_file": log_file,
+        "trades_file": trades_file,
         "console_level": logging.INFO,
         "file_level": logging.DEBUG,
         "fmt": "%(asctime)s | %(processName)s | %(name)s | %(levelname)s | %(message)s",
@@ -54,6 +55,10 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
     root.handlers = [console_handler, file_handler]
     root.setLevel(logging.DEBUG)
 
+    trades_handler = logging.FileHandler(config["trades_file"], mode='w')
+    trades_handler.setFormatter(formatter)
+    trades_handler.setLevel(logging.DEBUG)
+
     ticker_handlers: dict = {}  # symbol -> FileHandler for per-ticker log files
 
     while True:
@@ -68,6 +73,9 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
         try:
             # NOTE: record is already a LogRecord instance sent via QueueHandler
             root.handle(record)
+            # Route "trades" logger records to the dedicated trades log file
+            if record.name == "trades":
+                trades_handler.emit(record)
             # Route Ticker.<symbol> loggers to per-ticker files
             if record.name.startswith("Ticker."):
                 symbol = record.name.split(".", 1)[1]
@@ -88,6 +96,10 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
         for h in list(root.handlers):
             root.removeHandler(h)
             h.close()
+    except Exception:
+        pass
+    try:
+        trades_handler.close()
     except Exception:
         pass
     for h in ticker_handlers.values():
