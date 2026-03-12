@@ -50,6 +50,45 @@
 
 ---
 
+## Testing
+
+- **`candles.py` — unit test candle classification**
+  For every combination of kind (1/2/3), subtype (U/D/none), direction (G/R), and pattern (H/S/X),
+  assert that `get_kind()`, `get_subtype()`, `get_direction()`, `get_pattern()`, and `to_string()`
+  return the expected values. Edge cases: exact high/low equality (inside candle boundary),
+  outside candle with both sides broken simultaneously.
+
+- **`BackTestStrategy.py` — unit test each strategy's entry signal**
+  For each strategy, construct minimal `chartDictNew` / `chartDictOld` dicts with synthetic
+  `Candle` objects and assert that `getNewTrade()` returns the correct trigger price and direction
+  (or no trade) for both the positive and negative cases.
+
+- **`BackTestStrategy.py` — unit test stop progression**
+  Given a sequence of daily candles, verify that `getStop()` produces:
+  - day 0: correct 50%-range or entry-candle-low stop
+  - day 1: breakeven (entry price)
+  - day 2+: trailing prior-candle low/high
+
+- **`BackTester.py` — regression test with fixed AAPL data**
+  `AAPL_daily.csv` is already in the repo. Run a backtest on a known date range with a fixed strategy
+  and assert the output CSV matches a golden reference (symbol count, trade count, total gain).
+  This catches regressions in `enterTrade()` / `updateTrade()` logic without hitting the Alpaca API.
+
+- **`MarketTimeManager.py` — unit test timeframe flip detection**
+  Mock `datetime.now()` and assert `detectTFFlip()` correctly identifies transitions at
+  known boundary times for m5, m15, m30, m60, d, w, m, and q, including across DST boundaries.
+
+- **`alpaca_chart.py` — mock Alpaca API responses in tests**
+  Wrap `StockHistoricalDataClient` behind a thin interface so tests can inject pre-recorded
+  bar responses (e.g. from the existing CSV files) without making live network calls.
+  Validate candle assembly logic for edge cases: partial last candle, gap day, early close.
+
+- **`earnings_calendar.py` — unit test earnings date lookup**
+  Given a small CSV fixture, assert `get_ER_by_ticker()` returns the correct pre-earnings
+  trading day for BMO and AMC entries, and returns an empty list for unknown tickers.
+
+---
+
 ## Future / Nice-to-Have
 
 - **Notification / monitoring interface**
