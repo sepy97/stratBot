@@ -19,6 +19,12 @@
 - **Invalidate patterns that span shortened trading days**
   Candle combos should not include candles from early-close sessions (day-before-holiday half days).
 
+- **Cache initial candle data to speed up startup**
+  On each startup, `get_initial_data()` fetches the last 4 bars per timeframe per symbol from Alpaca,
+  which is a large number of API calls for a big watchlist. Pre-fetch and persist this data to a local
+  SQLite cache (or reuse `ChartDB`) at market open via cron, so the bot can seed candle windows
+  instantly from disk instead of hitting the API on every restart during the trading day.
+
 ---
 
 ## Market Time / Calendar
