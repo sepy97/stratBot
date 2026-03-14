@@ -11,11 +11,12 @@ class Trade:
     BackTestStrategy.getStop() and related functions work unchanged.
     """
 
-    def __init__(self, symbol, triggerPrice, direction, chart, strategy):
+    def __init__(self, symbol, triggerPrice, direction, chart, strategy, quantity=1):
         self.strategy = strategy   # not in self.data so CSV export is unaffected
         tgt = float('inf') if direction == util.TickerStatus.LONG else 0.0
         self.data = {
             'symbol': symbol,
+            'quantity': quantity,
             'entryPrice': triggerPrice,
             'entryTimestamp_sec': int(_time.time()),
             'daysOpen': 0,
@@ -81,6 +82,28 @@ class Trade:
         d['exitTimestamp_sec'] = int(timestamp)
         d['stop type'] = 'forced close'
         d['gain %'] = self._calc_gain()
+
+    def realized_pnl(self):
+        """Return closed-trade P&L in dollars, or None while trade is open."""
+        ep = self.data['exitPrice']
+        if ep == -1:
+            return None
+        qty = self.data.get('quantity', 1)
+        entry = self.data['entryPrice']
+        if self.data['direction'] == util.TickerStatus.LONG:
+            return (ep - entry) * qty
+        return (entry - ep) * qty
+
+    def starting_value(self):
+        """Notional capital allocated at entry for this trade."""
+        return self.data['entryPrice'] * self.data.get('quantity', 1)
+
+    def ending_value(self):
+        """Capital after close for this trade, or None while trade is open."""
+        pnl = self.realized_pnl()
+        if pnl is None:
+            return None
+        return self.starting_value() + pnl
 
     # ── properties ────────────────────────────────────────────────────────────
 

@@ -46,8 +46,12 @@ def log_session_summary(tickers):
         return
 
     total = len(all_closed)
-    wins = sum(1 for tr in all_closed if (tr.data.get('gain %') or 0) > 0)
-    total_gain = sum(tr.data.get('gain %') or 0 for tr in all_closed)
+    pnl_values = [tr.realized_pnl() for tr in all_closed]
+    start_values = [tr.starting_value() for tr in all_closed]
+    wins = sum(1 for pnl in pnl_values if pnl is not None and pnl > 0)
+    total_pnl = sum(pnl for pnl in pnl_values if pnl is not None)
+    total_start = sum(start_values)
+    total_gain_pct = 100 * total_pnl / total_start if total_start else 0
 
     by_strategy = {}
     for tr in all_closed:
@@ -59,16 +63,21 @@ def log_session_summary(tickers):
         f"  Session summary:",
         f"  Total trades : {total}",
         f"  Win rate     : {100 * wins / total:.1f}%  ({wins}/{total})",
-        f"  Total gain   : {total_gain:.2f}%   avg: {total_gain / total:.2f}%",
+        f"  Total PnL    : ${total_pnl:.2f}",
+        f"  Total gain   : {total_gain_pct:.2f}%",
     ]
     for strat_name, trades in by_strategy.items():
         s_total = len(trades)
-        s_wins  = sum(1 for tr in trades if (tr.data.get('gain %') or 0) > 0)
-        s_gain  = sum(tr.data.get('gain %') or 0 for tr in trades)
+        s_pnl_values = [tr.realized_pnl() for tr in trades]
+        s_start_values = [tr.starting_value() for tr in trades]
+        s_wins = sum(1 for pnl in s_pnl_values if pnl is not None and pnl > 0)
+        s_pnl = sum(pnl for pnl in s_pnl_values if pnl is not None)
+        s_start = sum(s_start_values)
+        s_gain_pct = 100 * s_pnl / s_start if s_start else 0
         lines.append(
             f"  [{strat_name}] trades={s_total}, "
             f"wins={s_wins} ({100 * s_wins / s_total:.1f}%), "
-            f"gain={s_gain:.2f}%, avg={s_gain / s_total:.2f}%"
+            f"pnl=${s_pnl:.2f}, gain={s_gain_pct:.2f}%"
         )
     lines.append("========================")
     summary = "\n".join(lines)
