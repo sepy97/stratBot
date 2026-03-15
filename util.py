@@ -18,6 +18,7 @@ from enum import Enum
 
 import pytz
 import os
+import secrets
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT
@@ -44,6 +45,22 @@ def loadSymbols():
     else:
         print("No watchlist in config.toml!!!")
     return symbols
+
+def getLogPath():
+    dic = tomlkit.loads(Path("config.toml").read_text())
+    return str(dic["paths"]["logs"])
+
+def getUsername():
+    config_path = Path("config.toml")
+    dic = tomlkit.loads(config_path.read_text())
+    if "user" in dic and "name" in dic["user"] and dic["user"]["name"]:
+        return str(dic["user"]["name"])
+    username = "user_" + secrets.token_hex(2)
+    if "user" not in dic:
+        dic.add("user", tomlkit.table())
+    dic["user"]["name"] = username
+    config_path.write_text(tomlkit.dumps(dic))
+    return username
 
 def moveLogs(destPath=None, tzone="America/Los_Angeles"):
     if destPath is None:
