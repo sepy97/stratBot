@@ -1,7 +1,8 @@
 import threading
 import logging
 
-logger = logging.getLogger(__name__)
+import log_functions
+logger = logging.getLogger(log_functions.CHANNEL_BROKER)
 
 
 class Broker(threading.Thread):

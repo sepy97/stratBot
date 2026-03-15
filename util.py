@@ -65,8 +65,9 @@ def getUsername():
 def moveLogs(destPath=None, tzone="America/Los_Angeles", log_dir=None):
     dt = datetime.now(tz=pytz.timezone(tzone))
     if log_dir is not None:
-        src = os.path.join(log_dir, "current")
-        dest = os.path.join(log_dir, dt.strftime("%Y-%m-%d"), dt.strftime("%H.%M.%S"))
+        parent = os.path.dirname(log_dir)  # .../sepy
+        src = log_dir                       # .../sepy/current
+        dest = os.path.join(parent, dt.strftime("%Y-%m-%d"), dt.strftime("%H.%M.%S"))
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         os.rename(src, dest)
         return

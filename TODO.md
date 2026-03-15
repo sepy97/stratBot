@@ -95,17 +95,83 @@
 
 ---
 
-## Future / Nice-to-Have
+## Future Plans
 
-- **Notification / monitoring interface**
-  A Telegram bot for trade alerts and session summaries would be more practical
-  than a full web app.
+### Cloud Deployment
 
-- **Deploy to a cloud VM**
-  The bot needs to run continuously during market hours.
-  A small DigitalOcean Droplet or AWS EC2 instance with a systemd service is sufficient.
+- **Containerize the bot**
+  Write a `Dockerfile`. The bot is a long-running process, not a web service, so
+  this is straightforward. Pin the Python version and copy in `requirements.txt`.
+
+- **Deploy to a cloud host**
+  Cheapest options for a single long-running process:
+  - Small VPS (DigitalOcean ~$6/mo, Hetzner ~$4/mo) with Docker + systemd
+  - Railway / Render — push-to-deploy, ~$5-7/mo
+  - AWS ECS Fargate or GCP Cloud Run Jobs — more complex, auto-restarts
+
+- **Process supervisor / auto-restart**
+  Wrap the bot in systemd or supervisord so it recovers from crashes automatically.
+  Individual thread crashes should attempt restart instead of killing the whole bot.
+
+- **Scheduled start/stop**
+  Use cron or a cloud scheduler to start the bot before market open and stop it after
+  close — saves resources on nights, weekends, and holidays.
+
+- **Persistent storage for trade history**
+  Mount a volume or use a lightweight DB (SQLite file on disk, or free-tier Postgres)
+  for trade history and state recovery after restarts. The JSONL event ledger could
+  also live here instead of flat files.
+
+### Notifications & Monitoring
+
+- **Telegram bot for trade alerts**
+  Add a `notify()` function using the Telegram Bot API (free, instant, no infrastructure).
+  Post on: trade entry/exit, session start/end, errors, and daily PnL summaries.
+
+- **Trade dashboard / visibility**
+  Expose a lightweight web endpoint (FastAPI) or write session data to a shared location
+  for viewing open positions, PnL, and trade history. Could also be a simple Telegram
+  `/status` command instead of a full web app.
 
 - **Handle internet connectivity loss**
   Add retry/reconnect logic in `DataRetrieval` for network errors so the bot
   can recover without requiring a manual restart.
+
+### Control Plane
+
+- **Kill switch**
+  Options (not mutually exclusive):
+  - Telegram bot command (`/kill`, `/pause`, `/resume`) that sets a `threading.Event`
+  - HTTP endpoint (`POST /kill`) behind auth
+  - File-based flag (touch a sentinel file to trigger shutdown)
+
+- **Remote controls**
+  Extend the Telegram bot or HTTP API with commands:
+  - `/status` — open positions, current PnL, bot health
+  - `/pause` — stop new entries but keep managing open trades
+  - `/resume` — re-enable entries
+  - `/watchlist add/remove SYMBOL` — dynamic watchlist management
+
+### Risk Management & Sizing
+
+- **Position sizing**
+  Everything currently defaults to `quantity=1`. Add account-aware sizing —
+  fixed dollar amount per trade or percentage of equity.
+
+- **Portfolio-level risk limits**
+  Max daily loss limit, max concurrent positions, max position size per symbol,
+  total portfolio exposure cap.
+
+### Market Hours & Scheduling
+
+- **Replace `time.sleep(6*60*60)` with market-calendar-aware lifecycle**
+  `MarketTimeManager` already has open/close times. Use those to auto-start at open
+  and shut down at close, handling early-close days correctly.
+
+### Cleanup
+
+- **Remove legacy modules**
+  `session.py` (TD Ameritrade), `bot.py` (old entry point), and the data-fetching
+  functions in `config.py` are unused. Remove them and drop `td-ameritrade-python-api`
+  from `requirements.txt`.
 

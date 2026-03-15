@@ -1,42 +1,50 @@
-import threading
 import logging
 import os
-from apscheduler.schedulers.background import BackgroundScheduler
 import queue
+import threading
 import time
-import pandas as pd
-from alpaca.data import StockHistoricalDataClient
-
 from datetime import datetime, timedelta
 
+import pandas as pd
+from alpaca.data import StockHistoricalDataClient
+from apscheduler.schedulers.background import BackgroundScheduler
+
+import log_functions
+import MarketTimeManager as mtm
 import util
 from alpaca_config import alpaca_config
-import MarketTimeManager as mtm
+from BackTester import printTradeDict
 from Broker import Broker
 from DataRetrieval import DataRetrieval
-from Ticker import Ticker
 from strategy import Strategy
-from BackTester import printTradeDict
-import log_functions
+from Ticker import Ticker
 
 logger = logging.getLogger(__name__)
-trades_logger = logging.getLogger("trades")
+trades_logger = logging.getLogger(log_functions.CHANNEL_TRADES)
+system_logger = logging.getLogger(log_functions.CHANNEL_SYSTEM)
+market_logger = logging.getLogger(log_functions.CHANNEL_MARKET)
 
-def scheduling(symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant=5):
+
+def scheduling(
+    symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant=5
+):
     current_time = datetime.now()
     DR_queue.put(symbols)
     with DR_condition:
         DR_condition.notify()
-    #print("Data retrieval signal sent", flush=True)
+    # print("Data retrieval signal sent", flush=True)
     for t in TF:
         TF[t] = False
-        if candle_flipped := market_time_manager.detectTFFlip(current_time, mtm.timeframe_LUT[t][0], time_quant):
+        if candle_flipped := market_time_manager.detectTFFlip(
+            current_time, mtm.timeframe_LUT[t][0], time_quant
+        ):
             TF[t] = True
-            print(f"Timeframe {t} flipped: {candle_flipped} at time {current_time}", flush=True)
+            market_logger.info(f"TF {t} flipped @ {current_time}")
     with TF_condition:
         TF_condition.notify_all()
-    #print("Timeframe signal sent to all tickers", flush=True)
+    # print("Timeframe signal sent to all tickers", flush=True)
     return
+
 
 def log_session_summary(tickers):
     """Log performance statistics for all closed trades in the session."""
@@ -83,28 +91,45 @@ def log_session_summary(tickers):
     summary = "\n".join(lines)
     trades_logger.info(summary)
 
+
 # entry point for the program
-if __name__ == '__main__':
+if __name__ == "__main__":
     # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
 
-    # Set up unified logging (routes all loggers to live_trading.log + console + per-ticker strat_<symbol>.log)
-    log_queue, log_proc = log_functions.start_logging_process(log_functions.log_init("live_trading.log"))
+    # Set up unified logging, writing directly to the shared iCloud directory.
+    # Archive any stale logs from a previous crashed session BEFORE
+    # starting the new logging process (Option C: mode='a' + fresh dir).
+    log_dir = os.path.join(util.getLogPath(), util.getUsername(), "current")
+    os.makedirs(log_dir, exist_ok=True)
+    try:
+        util.moveLogs(log_dir=log_dir)
+    except (FileNotFoundError, OSError):
+        pass  # First run or already clean — nothing to archive
+    os.makedirs(log_dir, exist_ok=True)
+    log_queue, log_proc = log_functions.start_logging_process(
+        log_functions.log_init("live_trading.log", log_dir=log_dir)
+    )
+    log_functions.log_event("session_start", mode="live")
 
     # Route uncaught thread exceptions through the logging system instead of stderr
     def _thread_excepthook(args):
         logger.error(
             "Uncaught exception in thread '%s'",
-            args.thread.name if args.thread else '<unknown>',
+            args.thread.name if args.thread else "<unknown>",
             exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
         )
+
     threading.excepthook = _thread_excepthook
 
     try:
         # load watchlist from csv (same file used by backtester)
-        watchlist = pd.read_csv('Watchlists/NASDAQ100_2025.csv', header=None)[0].to_list()
-        session = StockHistoricalDataClient(alpaca_config['key'], alpaca_config['secret_key'])
+        watchlist = pd.read_csv("Watchlists/NASDAQ100_2025.csv", header=None)[
+            0
+        ].to_list()
+        session = StockHistoricalDataClient(
+            alpaca_config["key"], alpaca_config["secret_key"]
+        )
         market_time_manager = mtm.MarketTimeManager()
-
 
         # create global queues for scheduled data retrieval, for data with tickers quotes, and for signals to broker
         # each queue is used for communication between different threads
@@ -118,12 +143,31 @@ if __name__ == '__main__':
         broker_queue = queue.Queue()
         broker_condition = threading.Condition()
         # TF is a dictionary of timeframes and boolean values that indicate if the timeframe is flipped; initialized by True for all timeframes
-        TF = {"m5": True, "m15": True, "m30": True, "m60": True, "d": True, "w": True, "m": True, "q": True}
+        TF = {
+            "m5": True,
+            "m15": True,
+            "m30": True,
+            "m60": True,
+            "d": True,
+            "w": True,
+            "m": True,
+            "q": True,
+        }
         TF_condition = threading.Condition()
-        time_quant = 5 # interval (in seconds) before the next data retrieval and trigger checks
+        time_quant = (
+            5  # interval (in seconds) before the next data retrieval and trigger checks
+        )
 
         # authorize data retriever
-        data_retriever = DataRetrieval(session, watchlist, DR_queue, ticker_queues, DR_condition, ticker_condition, daemon=True)
+        data_retriever = DataRetrieval(
+            session,
+            watchlist,
+            DR_queue,
+            ticker_queues,
+            DR_condition,
+            ticker_condition,
+            daemon=True,
+        )
         # data_retriever should send data (via map) to ticker threads
         data_retriever.start()
 
@@ -136,26 +180,57 @@ if __name__ == '__main__':
         tickers = []
         valid_watchlist = []
         for symbol in watchlist:
-            data = data_retriever.get_initial_data(symbol, ["m5", "m15", "m30", "m60", "d", "w", "m", "q"])
+            data = data_retriever.get_initial_data(
+                symbol, ["m5", "m15", "m30", "m60", "d", "w", "m", "q"]
+            )
             if data is None:
                 continue
-            t = Ticker(symbol, ticker_queues[symbol], TF, broker_queue, ticker_condition, TF_condition, broker_condition, daemon=True)
+            t = Ticker(
+                symbol,
+                ticker_queues[symbol],
+                TF,
+                broker_queue,
+                ticker_condition,
+                TF_condition,
+                broker_condition,
+                daemon=True,
+            )
             t.strategies.append(Strategy("BasicDailyAS"))
             t.strategies.append(Strategy("StratLab2dGM"))
             t.initializeCandles(data)
             tickers.append(t)
             valid_watchlist.append(symbol)
-        print(f"Initialized {len(valid_watchlist)}/{len(watchlist)} symbols successfully.")
+        system_logger.info(
+            f"Initialized {len(valid_watchlist)}/{len(watchlist)} symbols successfully."
+        )
         for t in tickers:
             # each thread should first initialize the ticker, then start waiting for the signal from the data retriever
             t.start()
 
         # create global APScheduler and schedule data retrieval (by function that adds signal to the queue) every 5 seconds
         scheduler = BackgroundScheduler()
-        proper_start_time = market_time_manager.getProperStartTime(datetime.now(), time_quant)
-        print(f"Proper start time: {proper_start_time}")
-        print(f"Opening time: {datetime.fromtimestamp(market_time_manager.getTodayOpenTime())}")
-        scheduler.add_job(lambda:scheduling(valid_watchlist, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant), 'interval', seconds=5, timezone="America/Los_Angeles", start_date=proper_start_time)
+        proper_start_time = market_time_manager.getProperStartTime(
+            datetime.now(), time_quant
+        )
+        system_logger.info(f"Proper start time: {proper_start_time}")
+        system_logger.info(
+            f"Opening time: {datetime.fromtimestamp(market_time_manager.getTodayOpenTime())}"
+        )
+        scheduler.add_job(
+            lambda: scheduling(
+                valid_watchlist,
+                DR_queue,
+                DR_condition,
+                TF,
+                TF_condition,
+                market_time_manager,
+                time_quant,
+            ),
+            "interval",
+            seconds=5,
+            timezone="America/Los_Angeles",
+            start_date=proper_start_time,
+        )
         scheduler.start()
 
         time.sleep(6 * 60 * 60) # 6 hours in seconds
@@ -177,7 +252,7 @@ if __name__ == '__main__':
                 continue
             # use last known m5 close as the exit price, fall back to 'd'
             last_price = None
-            for tf in ('m5', 'm15', 'd'):
+            for tf in ("m5", "m15", "d"):
                 if t.candles.get(tf):
                     last_price = t.candles[tf][0].close
                     break
@@ -191,15 +266,24 @@ if __name__ == '__main__':
                 trade.force_close(last_price, now)
                 t.trade_history.append(trade)
                 t.active_trades.remove(trade)
-                broker_queue.put({
-                    'action': 'EXIT',
-                    'symbol': t.symbol,
-                    'price': trade.data['exitPrice'],
-                    'direction': trade.direction,
-                })
+                broker_queue.put(
+                    {
+                        "action": "EXIT",
+                        "symbol": t.symbol,
+                        "price": trade.data["exitPrice"],
+                        "direction": trade.direction,
+                    }
+                )
                 with broker_condition:
                     broker_condition.notify()
-                print(f"Forced close: {t.symbol} @ {last_price:.2f} (gain={trade.data['gain %']:.2f}%)")
+                log_functions.log_event(
+                    "forced_close",
+                    symbol=t.symbol,
+                    strategy=trade.strategy.name,
+                    direction=trade.direction.name,
+                    price=last_price,
+                    gain_pct=round(trade.data["gain %"], 4),
+                )
                 trades_logger.info(
                     f"EXIT {t.symbol}: forced close @ {last_price:.2f}, "
                     f"gain={trade.data['gain %']:.2f}%, "
@@ -217,8 +301,8 @@ if __name__ == '__main__':
             os.makedirs("Trades", exist_ok=True)
             ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             printTradeDict(all_trades, f"Trades/live_trades_{ts}.csv")
-        print("Moving logs...")
-        util.moveLogs()
+        log_functions.log_event("session_end", mode="live")
+        util.moveLogs(log_dir=log_dir)
     except Exception:
         logger.exception("Fatal error in main process")
         raise

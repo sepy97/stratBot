@@ -176,6 +176,15 @@ def enterTrade(sym, chartDictNew, chartDictOld, session, strategy):
         currentTrade["RR"] = (currentTrade['target']-currentTrade['entryPrice'])/(currentTrade['entryPrice'] - currentTrade['stop'])
         if not exitID is None:
             currentTrade['exitTimestamp_sec'] = intradayCandles[exitID].open_ts
+        log_functions.log_event(
+            "bt_entry",
+            symbol=sym,
+            strategy=strategy.__class__.__name__,
+            direction=direction.name,
+            price=triggerPrice,
+            stop=round(currentTrade.get('stop', 0), 4),
+            rr=round(currentTrade.get('RR', 0), 2),
+        )
         tradeToReturn.append(currentTrade)
     return tradeToReturn
 
@@ -236,12 +245,19 @@ def updateTrade(trade, chartDictNew, chartDictOld, session, strategy):
                     trade['stop type'] = "target hit"
                     trade['exitPrice'] = trade['target']
         # Record exit price and time 
-        if entryID < 0: # stop or target gapped 
+        if entryID < 0: # stop or target gapped
             trade['exitPrice'] = intradayCandles[0].open
             trade['stop type'] = "stop gapped" if entryID == -1 else "target gapped"
             trade['exitTimestamp_sec'] = intradayCandles[0].open_ts
         else:   # stop hit or target reached, price is already recorded earlier, just record the time (no need to check for gap - already checked earlier)
             trade['exitTimestamp_sec'] = intradayCandles[entryID].open_ts
+        log_functions.log_event(
+            "bt_exit",
+            symbol=trade['symbol'],
+            direction=trade['direction'].name,
+            price=trade['exitPrice'],
+            stop_type=trade['stop type'],
+        )
   
 def printTrade(trade):
     entryTime = datetime.fromtimestamp(trade['entryTimestamp_sec'])
@@ -397,7 +413,14 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     test_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
     tradeLogFileName = "./Trades/trades_" + startDay_str.split(' ')[0].replace('-', '') + "_" + endDay_str.split(' ')[0].replace('-', '') + "_" + watchlist_name + "_" + strategy_name + "_" + test_timestamp + ".csv"
     os.makedirs('./Trades/', exist_ok=True)
-    log_config = log_functions.log_init()
+    log_dir = os.path.join(util.getLogPath(), util.getUsername(), "current")
+    os.makedirs(log_dir, exist_ok=True)
+    try:
+        util.moveLogs(log_dir=log_dir)
+    except (FileNotFoundError, OSError):
+        pass
+    os.makedirs(log_dir, exist_ok=True)
+    log_config = log_functions.log_init(log_dir=log_dir, symbols=list(watchlist))
     log_queue, log_proc = log_functions.start_logging_process(log_config)
     #log_listener.start()
     
@@ -511,18 +534,9 @@ def runBacktest(startDay_str, endDay_str, wl, strategy_name, earnings_file):
     ========================""")
 
     printTradeDict(all_trades, tradeLogFileName)
-    print("Stopping log listener...")
+    log_functions.log_event("bt_session_end", strategy=strategy_name, watchlist=wl)
     log_functions.stop_logging_process(log_queue, log_proc)
-    print("Log listener stopped")
-    # Move log file
-    try:
-    # Rename the file
-        os.rename("strat_bot.log", "strat_bot_" + test_timestamp + ".log")
-        print(f"Program log saved to 'strat_bot_{test_timestamp}.log'")
-    except FileNotFoundError:
-        print(f"Error: The file 'strat_bot.log' was not found.")
-    except OSError as e:
-        print(f"Error renaming file: {e}")
+    util.moveLogs(log_dir=log_dir)
    
 # Backtesting with limited number of queries for candle bars
 # Assume that strategy is relying on D and higher TF

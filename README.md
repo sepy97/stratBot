@@ -250,13 +250,91 @@ CSV files with columns `act_symbol`, `date`, `when` (`BMO` = before market open,
 
 ## Output
 
-### Log Files (Live Trading)
+### Log Files
 
-| File | Contents |
-|------|---------|
-| `live_trading.log` | Main bot activity, errors, session summary |
-| `trades.log` | Trade entry/exit events with prices and gain |
-| `strat_<SYMBOL>.log` | Per-ticker strategy evaluation detail |
+All logs are written to `<icloud_logs_dir>/<username>/current/` during a session.
+At startup, any leftover logs from a previous crashed session are automatically
+archived to `<username>/<YYYY-MM-DD>/<HH.MM.SS>/`. At shutdown, the current
+session's logs are archived the same way.
+
+| File | Contents | When to read it |
+|------|----------|-----------------|
+| `app.log` | All operational activity (INFO+), errors, warnings. Ticker debug noise is suppressed; ledger JSON is excluded. | **"What happened this session?"** — start here for any investigation. |
+| `trades.log` | Trade entries, exits, forced closes, and the session P&L summary. One line per action. | **"Show me today's trades."** — quick scan of all trade activity. |
+| `events.jsonl` | Structured JSON-lines audit trail. Every significant event (entry, exit, stop update, signal, session start/end) with a monotonic `seq` number. | **"Analyze P&L programmatically."** — parse with `jq`, pandas, or any JSON tool. |
+| `tickers/strat_<SYM>.log` | Per-symbol detail at DEBUG level: candle creation, bar updates, timeframe flips, signals. | **"Why did AAPL exit early?"** — deep-dive into one symbol's full timeline. |
+| (console) | Filtered live view: trade events, system messages, errors. No per-bar noise. | **During live trading** — monitor in real time. |
+
+### Reading the Logs
+
+**Quick P&L check:**
+```bash
+grep "EXIT\|ENTRY" trades.log
+```
+
+**Structured analysis with jq:**
+```bash
+# All exits with gain percentage
+jq 'select(.event=="exit")' events.jsonl
+
+# Losers only
+jq 'select(.event=="exit" and .gain_pct < 0)' events.jsonl
+
+# Everything for one symbol
+jq 'select(.symbol=="AAPL")' events.jsonl
+```
+
+**Debug a specific symbol:**
+```bash
+cat tickers/strat_AAPL.log
+```
+
+**Find errors across the session:**
+```bash
+grep "ERROR\|CRITICAL" app.log
+```
+
+**Filter app.log by domain** (logger name is in the format string):
+```bash
+grep "| broker |" app.log      # broker activity
+grep "| market |" app.log      # market data events
+grep "| system |" app.log      # system init/status
+```
+
+### events.jsonl Format
+
+Each line is a self-contained JSON object:
+```json
+{"seq": 1, "ts": "2026-03-27T09:31:00", "event": "session_start", "mode": "live"}
+{"seq": 2, "ts": "2026-03-27T10:15:23", "event": "entry", "symbol": "AAPL", "strategy": "BasicDailyAS", "direction": "LONG", "triggerPrice": 150.00, "stop": 148.50, "RR": 2.1}
+{"seq": 3, "ts": "2026-03-27T10:45:10", "event": "stop_update", "symbol": "AAPL"}
+{"seq": 4, "ts": "2026-03-27T14:30:00", "event": "exit", "symbol": "AAPL", "strategy": "BasicDailyAS", "direction": "LONG", "exitPrice": 153.00, "stopType": "trailing", "gain_pct": 2.0}
+{"seq": 5, "ts": "2026-03-27T16:00:00", "event": "session_end", "mode": "live"}
+```
+
+| Field | Description |
+|-------|-------------|
+| `seq` | Monotonic sequence number (assigned by the logging process; guaranteed unique per session) |
+| `ts` | ISO 8601 timestamp of when the event was emitted |
+| `event` | Event type: `session_start`, `session_end`, `entry`, `exit`, `signal`, `stop_update`, `forced_close`, `bt_entry`, `bt_exit`, `bt_session_end` |
+| Other fields | Vary by event type: `symbol`, `strategy`, `direction`, `price`, `gain_pct`, etc. |
+
+### Log Archival
+
+Logs are archived automatically:
+- **At startup**: any leftover `current/` directory (from a crash) is moved to `<YYYY-MM-DD>/<HH.MM.SS>/`
+- **At shutdown**: the completed session's `current/` is moved the same way
+
+Archives live in the iCloud logs directory configured in `config.toml`:
+```
+<logs_path>/<username>/
+  ├── current/           ← active session (wiped on archive)
+  ├── 2026-03-27/
+  │   ├── 09.30.15/      ← morning session
+  │   └── 14.00.22/      ← afternoon session
+  └── 2026-03-28/
+      └── 09.31.00/
+```
 
 ### Trade CSVs
 

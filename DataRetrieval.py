@@ -8,6 +8,8 @@ from alpaca.data.requests import StockBarsRequest
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+import log_functions
+market_logger = logging.getLogger(log_functions.CHANNEL_MARKET)
 
 class DataRetrieval(threading.Thread):
     def __init__(self, session, watchlist, input_queue, output_queues, DR_condition, ticker_condition, *args, **kwargs):
@@ -53,12 +55,15 @@ class DataRetrieval(threading.Thread):
                 continue
             # for now, bar data is being put into the output queues in a for-loop
             # TODO: Use map function to put bar data into output queues
+            distributed = 0
             for symbol in self.watchlist:
                 if symbol not in bar:
                     logger.warning(f"DataRetrieval: no bar returned for {symbol} this tick, skipping")
                     continue
                 self.output_queues[symbol].put(bar[symbol])
+                distributed += 1
             # map(lambda s: self.output_queues[self.watchlist.index(s)].put(s), self.watchlist)
+            market_logger.debug(f"Tick: bar distributed to {distributed}/{len(self.watchlist)} symbols")
             with self.ticker_condition:
                 self.ticker_condition.notify_all()
         return
