@@ -1,7 +1,10 @@
+import json
 import logging
 import logging.handlers
 import multiprocessing as mp
+import os
 import sys
+from datetime import datetime as _datetime
 from time import sleep
 
 class SimpleQueueHandler(logging.Handler):
@@ -18,18 +21,27 @@ class SimpleQueueHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
-def log_init(log_file="strat_bot.log", trades_file="trades.log"):
+def log_init(log_file="strat_bot.log", trades_file="trades.log", log_dir="."):
     """
     Returns a pure config object (picklable) used by the logging process
     to construct handlers. Avoids passing actual handler objects across
     processes, which is unsafe.
+
+    log_dir defaults to "." for backward compatibility with existing callers
+    that don't pass it. Pass log_dir to write all files into a specific directory
+    (e.g. the iCloud shared path).
     """
     return {
-        "log_file": log_file,
-        "trades_file": trades_file,
+        "log_file":     os.path.join(log_dir, log_file),
+        "trades_file":  os.path.join(log_dir, trades_file),
+        "system_file":  os.path.join(log_dir, "system.log"),
+        "market_file":  os.path.join(log_dir, "market.log"),
+        "broker_file":  os.path.join(log_dir, "broker.log"),
+        "ledger_file":  os.path.join(log_dir, "events.jsonl"),
+        "log_dir":      log_dir,
         "console_level": logging.INFO,
-        "file_level": logging.DEBUG,
-        "fmt": "%(asctime)s | %(processName)s | %(name)s | %(levelname)s | %(message)s",
+        "file_level":    logging.DEBUG,
+        "fmt":     "%(asctime)s | %(processName)s | %(name)s | %(levelname)s | %(message)s",
         "datefmt": "%Y-%m-%d %H:%M:%S",
     }
 
@@ -55,9 +67,28 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
     root.handlers = [console_handler, file_handler]
     root.setLevel(logging.DEBUG)
 
+    # Domain-specific channel handlers
     trades_handler = logging.FileHandler(config["trades_file"], mode='w')
     trades_handler.setFormatter(formatter)
     trades_handler.setLevel(logging.DEBUG)
+
+    system_handler = logging.FileHandler(config["system_file"], mode='w')
+    system_handler.setFormatter(formatter)
+    system_handler.setLevel(logging.DEBUG)
+
+    market_handler = logging.FileHandler(config["market_file"], mode='w')
+    market_handler.setFormatter(formatter)
+    market_handler.setLevel(logging.DEBUG)
+
+    broker_handler = logging.FileHandler(config["broker_file"], mode='w')
+    broker_handler.setFormatter(formatter)
+    broker_handler.setLevel(logging.DEBUG)
+
+    # Ledger uses a bare formatter — JSON lines already contain timestamps
+    ledger_formatter = logging.Formatter("%(message)s")
+    ledger_handler = logging.FileHandler(config["ledger_file"], mode='a')
+    ledger_handler.setFormatter(ledger_formatter)
+    ledger_handler.setLevel(logging.DEBUG)
 
     ticker_handlers: dict = {}  # symbol -> FileHandler for per-ticker log files
 
@@ -73,14 +104,23 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
         try:
             # NOTE: record is already a LogRecord instance sent via QueueHandler
             root.handle(record)
-            # Route "trades" logger records to the dedicated trades log file
+            # Route to domain-specific channel files
             if record.name == "trades":
                 trades_handler.emit(record)
+            if record.name == "system":
+                system_handler.emit(record)
+            if record.name == "market":
+                market_handler.emit(record)
+            if record.name == "broker":
+                broker_handler.emit(record)
+            if record.name == "ledger":
+                ledger_handler.emit(record)
             # Route Ticker.<symbol> loggers to per-ticker files
             if record.name.startswith("Ticker."):
                 symbol = record.name.split(".", 1)[1]
                 if symbol not in ticker_handlers:
-                    h = logging.FileHandler(f"strat_{symbol}.log", mode='a')
+                    h = logging.FileHandler(
+                        os.path.join(config["log_dir"], f"strat_{symbol}.log"), mode='a')
                     h.setFormatter(formatter)
                     h.setLevel(logging.DEBUG)
                     ticker_handlers[symbol] = h
@@ -90,7 +130,6 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
             import traceback
             traceback.print_exc()
 
-
     # Clean exit
     try:
         for h in list(root.handlers):
@@ -98,10 +137,11 @@ def _logging_process_main(log_queue: mp.SimpleQueue, config: dict):
             h.close()
     except Exception:
         pass
-    try:
-        trades_handler.close()
-    except Exception:
-        pass
+    for h in [trades_handler, system_handler, market_handler, broker_handler, ledger_handler]:
+        try:
+            h.close()
+        except Exception:
+            pass
     for h in ticker_handlers.values():
         try:
             h.close()
@@ -116,7 +156,6 @@ def start_logging_process(config):
     log_queue = mp.SimpleQueue()
 
     # Main process logger -> queue
-    #queue_handler = logging.handlers.QueueHandler(log_queue)
     queue_handler = SimpleQueueHandler(log_queue)
     root = logging.getLogger()
     root.handlers = [queue_handler]
@@ -141,12 +180,10 @@ def stop_logging_process(log_queue: mp.SimpleQueue, log_proc: mp.Process, timeou
     If it doesn't exit within `timeout` seconds, terminate it.
     """
     try:
-        # send sentinel to stop the logging process
         log_queue.put(None)
     except Exception:
         pass
 
-    # wait for graceful exit
     log_proc.join(timeout)
     if log_proc.is_alive():
         try:
@@ -155,15 +192,34 @@ def stop_logging_process(log_queue: mp.SimpleQueue, log_proc: mp.Process, timeou
             pass
         log_proc.join(1.0)
 
-
 def subprocess_init(log_queue: mp.SimpleQueue) -> None:
-    #h = logging.handlers.QueueHandler(log_queue)
     h = SimpleQueueHandler(log_queue)
     logger = logging.getLogger()
     logger.handlers = [h]  # Replace all handlers with the queue handler
     logger.setLevel(logging.DEBUG)
 
-# ====== Example usage ====== TODO: this needs to be rewritten to accommodate new implmementation ======
+# ── JSONL event ledger ────────────────────────────────────────────────────────
+
+_ledger = logging.getLogger("ledger")
+_seq = 0
+
+def log_event(event_type: str, **fields):
+    """
+    Emit a structured JSON event to events.jsonl via the ledger logger.
+    Thread- and process-safe: records flow through the shared SimpleQueue
+    to the single logging process, which serialises writes to disk.
+    """
+    global _seq
+    _seq += 1
+    record = {
+        "seq":   _seq,
+        "ts":    _datetime.now().isoformat(timespec="seconds"),
+        "event": event_type,
+        **fields,
+    }
+    _ledger.info(json.dumps(record, default=str))
+
+# ====== Example usage ====== TODO: this needs to be rewritten to accommodate new implementation ======
 def _init_pool(log_queue):
     subprocess_init(log_queue)
 
