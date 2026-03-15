@@ -62,11 +62,17 @@ def getUsername():
     config_path.write_text(tomlkit.dumps(dic))
     return username
 
-def moveLogs(destPath=None, tzone="America/Los_Angeles"):
+def moveLogs(destPath=None, tzone="America/Los_Angeles", log_dir=None):
+    dt = datetime.now(tz=pytz.timezone(tzone))
+    if log_dir is not None:
+        src = os.path.join(log_dir, "current")
+        dest = os.path.join(log_dir, dt.strftime("%Y-%m-%d"), dt.strftime("%H.%M.%S"))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        os.rename(src, dest)
+        return
     if destPath is None:
         dic = tomlkit.loads(Path("config.toml").read_text())
         destPath = str(dic["paths"]["logs"])  # type: ignore[index]
-    dt = datetime.now(tz=pytz.timezone(tzone))
     cloudDir = str(destPath+dt.strftime("%Y-%m-%d")+"/"+dt.strftime("%H.%M.%S"))
     os.system("mkdir -p "+cloudDir)
     os.system(str("mv *.log "+cloudDir))
