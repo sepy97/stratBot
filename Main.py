@@ -92,6 +92,37 @@ def log_session_summary(tickers):
     trades_logger.info(summary)
 
 
+def _get_next_market_open(market_time_manager):
+    """Return the next market open timestamp (seconds), or None on failure.
+
+    Scans up to 10 days forward using getOpenCloseAtDay() to find the
+    next trading day.
+    """
+    now_ts = int(time.time())
+    for day_offset in range(1, 11):
+        future_ts = now_ts + day_offset * 86400
+        schedule = market_time_manager.getOpenCloseAtDay(future_ts)
+        if schedule['open'] > 0:
+            return schedule['open']
+    return None
+
+
+def _refresh_candles(tickers, data_retriever):
+    """Re-fetch candle windows for all tickers after overnight sleep."""
+    for t in tickers:
+        try:
+            data = data_retriever.get_initial_data(
+                t.symbol, ["m5", "m15", "m30", "m60", "d", "w", "m", "q"]
+            )
+            if data:
+                t.initializeCandles(data)
+                logger.debug(f"{t.symbol}: candles refreshed")
+            else:
+                logger.warning(f"{t.symbol}: failed to refresh candles")
+        except Exception as e:
+            logger.warning(f"{t.symbol}: error refreshing candles: {e}")
+
+
 # entry point for the program
 if __name__ == "__main__":
     # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
@@ -233,7 +264,33 @@ if __name__ == "__main__":
         )
         scheduler.start()
 
-        time.sleep(6 * 60 * 60) # 6 hours in seconds
+        # ── Market-aware main loop (replaces hard-coded sleep) ────────
+        # Runs continuously: trades during market hours, sleeps overnight.
+        # Breaks on KeyboardInterrupt (Ctrl+C) for graceful shutdown.
+        system_logger.info("Entering market-aware main loop")
+        try:
+            while True:
+                now_ts = int(time.time())
+                if market_time_manager.isMarketOpen(now_ts):
+                    time.sleep(1)
+                else:
+                    # Market closed — sleep until 20 min before next open
+                    next_open = _get_next_market_open(market_time_manager)
+                    if next_open is None:
+                        system_logger.warning("Could not determine next market open; retrying in 60s")
+                        time.sleep(60)
+                        continue
+                    sleep_sec = max(1, next_open - now_ts - 20 * 60)
+                    system_logger.info(
+                        f"Market closed. Sleeping {sleep_sec // 3600}h "
+                        f"{(sleep_sec % 3600) // 60}m until pre-market."
+                    )
+                    time.sleep(sleep_sec)
+                    # On wake: refresh candle data for all tickers
+                    system_logger.info("Waking up — refreshing candle data")
+                    _refresh_candles(tickers, data_retriever)
+        except KeyboardInterrupt:
+            system_logger.info("KeyboardInterrupt received — shutting down")
 
         # Stop the scheduler first so no new ticks can fire during shutdown.
         # Must happen before force-closing trades to avoid the race where a
