@@ -1,9 +1,11 @@
 import logging
 import os
 import queue
+import signal
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 from alpaca.data import StockHistoricalDataClient
@@ -123,9 +125,41 @@ def _refresh_candles(tickers, data_retriever):
             logger.warning(f"{t.symbol}: error refreshing candles: {e}")
 
 
+# ── Signal-based shutdown ─────────────────────────────────────────────────────
+
+STRATBOT_DIR = Path.home() / ".stratbot"
+
+_shutdown_event = threading.Event()
+_force_close = False  # True when SIGUSR1 (kill-switch) is received
+
+
+def _handle_graceful(signum, frame):
+    """SIGTERM / SIGINT → graceful exit: save state, keep positions open."""
+    system_logger.info(f"Received signal {signum} — graceful shutdown")
+    _shutdown_event.set()
+
+
+def _handle_terminate(signum, frame):
+    """SIGUSR1 → kill-switch: force-close all positions, delete state."""
+    global _force_close
+    system_logger.info(f"Received signal {signum} — force-close shutdown")
+    _force_close = True
+    _shutdown_event.set()
+
+
 # entry point for the program
 if __name__ == "__main__":
-    # INITIALIZATION (TODO: separate into a different script that is scheduled to run once a day by cron)
+    # INITIALIZATION
+
+    # Register signal handlers before anything else
+    signal.signal(signal.SIGTERM, _handle_graceful)
+    signal.signal(signal.SIGINT, _handle_graceful)
+    signal.signal(signal.SIGUSR1, _handle_terminate)
+
+    # Write PID file
+    STRATBOT_DIR.mkdir(parents=True, exist_ok=True)
+    pid_file = STRATBOT_DIR / "run.pid"
+    pid_file.write_text(str(os.getpid()))
 
     # Set up unified logging, writing directly to the shared iCloud directory.
     # Archive any stale logs from a previous crashed session BEFORE
@@ -264,92 +298,98 @@ if __name__ == "__main__":
         )
         scheduler.start()
 
-        # ── Market-aware main loop (replaces hard-coded sleep) ────────
+        # ── Market-aware main loop ────────────────────────────────────
         # Runs continuously: trades during market hours, sleeps overnight.
-        # Breaks on KeyboardInterrupt (Ctrl+C) for graceful shutdown.
+        # Exits when _shutdown_event is set (via SIGTERM, SIGINT, or SIGUSR1).
         system_logger.info("Entering market-aware main loop")
-        try:
-            while True:
-                now_ts = int(time.time())
-                if market_time_manager.isMarketOpen(now_ts):
-                    time.sleep(1)
-                else:
-                    # Market closed — sleep until 20 min before next open
-                    next_open = _get_next_market_open(market_time_manager)
-                    if next_open is None:
-                        system_logger.warning("Could not determine next market open; retrying in 60s")
-                        time.sleep(60)
-                        continue
-                    sleep_sec = max(1, next_open - now_ts - 20 * 60)
-                    system_logger.info(
-                        f"Market closed. Sleeping {sleep_sec // 3600}h "
-                        f"{(sleep_sec % 3600) // 60}m until pre-market."
+        while not _shutdown_event.is_set():
+            now_ts = int(time.time())
+            if market_time_manager.isMarketOpen(now_ts):
+                _shutdown_event.wait(timeout=1)
+            else:
+                next_open = _get_next_market_open(market_time_manager)
+                if next_open is None:
+                    system_logger.warning(
+                        "Could not determine next market open; retrying in 60s"
                     )
-                    time.sleep(sleep_sec)
-                    # On wake: refresh candle data for all tickers
-                    system_logger.info("Waking up — refreshing candle data")
-                    _refresh_candles(tickers, data_retriever)
-        except KeyboardInterrupt:
-            system_logger.info("KeyboardInterrupt received — shutting down")
+                    _shutdown_event.wait(timeout=60)
+                    continue
+                sleep_sec = max(1, next_open - now_ts - 20 * 60)
+                system_logger.info(
+                    f"Market closed. Sleeping {sleep_sec // 3600}h "
+                    f"{(sleep_sec % 3600) // 60}m until pre-market."
+                )
+                _shutdown_event.wait(timeout=sleep_sec)
+                if _shutdown_event.is_set():
+                    break
+                system_logger.info("Waking up — refreshing candle data")
+                _refresh_candles(tickers, data_retriever)
 
+        # ── Shutdown sequence ─────────────────────────────────────────
         # Stop the scheduler first so no new ticks can fire during shutdown.
-        # Must happen before force-closing trades to avoid the race where a
-        # mid-flight tick sees an empty active_trades and re-enters a position.
         scheduler.shutdown(wait=True)
 
-        # finish all threads while saving the state of the program
+        # Stop data and ticker threads
         data_retriever.stopThr()
         for t in tickers:
             t.stopThr()
 
-        # force-close any trades still open at shutdown
-        now = time.time()
-        for t in tickers:
-            if not t.active_trades:
-                continue
-            # use last known m5 close as the exit price, fall back to 'd'
-            last_price = None
-            for tf in ("m5", "m15", "d"):
-                if t.candles.get(tf):
-                    last_price = t.candles[tf][0].close
-                    break
-            if last_price is None:
-                logger.warning(
-                    f"Cannot force-close {t.symbol}: no candle data available, "
-                    f"{len(t.active_trades)} trade(s) left open in CSV"
-                )
-                continue
-            for trade in list(t.active_trades):
-                trade.force_close(last_price, now)
-                t.trade_history.append(trade)
-                t.active_trades.remove(trade)
-                broker_queue.put(
-                    {
-                        "action": "EXIT",
-                        "symbol": t.symbol,
-                        "price": trade.data["exitPrice"],
-                        "direction": trade.direction,
-                    }
-                )
-                with broker_condition:
-                    broker_condition.notify()
-                log_functions.log_event(
-                    "forced_close",
-                    symbol=t.symbol,
-                    strategy=trade.strategy.name,
-                    direction=trade.direction.name,
-                    price=last_price,
-                    gain_pct=round(trade.data["gain %"], 4),
-                )
-                trades_logger.info(
-                    f"EXIT {t.symbol}: forced close @ {last_price:.2f}, "
-                    f"gain={trade.data['gain %']:.2f}%, "
-                    f"strategy={trade.strategy.name}"
-                )
+        if _force_close:
+            # ── TERMINATE (kill-switch): force-close all positions ────
+            system_logger.info("Kill-switch: force-closing all positions")
+            now = time.time()
+            for t in tickers:
+                if not t.active_trades:
+                    continue
+                last_price = None
+                for tf in ("m5", "m15", "d"):
+                    if t.candles.get(tf):
+                        last_price = t.candles[tf][0].close
+                        break
+                if last_price is None:
+                    logger.warning(
+                        f"Cannot force-close {t.symbol}: no candle data, "
+                        f"{len(t.active_trades)} trade(s) left open"
+                    )
+                    continue
+                for trade in list(t.active_trades):
+                    trade.force_close(last_price, now)
+                    t.trade_history.append(trade)
+                    t.active_trades.remove(trade)
+                    broker_queue.put(
+                        {
+                            "action": "EXIT",
+                            "symbol": t.symbol,
+                            "price": trade.data["exitPrice"],
+                            "direction": trade.direction,
+                        }
+                    )
+                    with broker_condition:
+                        broker_condition.notify()
+                    log_functions.log_event(
+                        "forced_close",
+                        symbol=t.symbol,
+                        strategy=trade.strategy.name,
+                        direction=trade.direction.name,
+                        price=last_price,
+                        gain_pct=round(trade.data["gain %"], 4),
+                    )
+                    trades_logger.info(
+                        f"EXIT {t.symbol}: forced close @ {last_price:.2f}, "
+                        f"gain={trade.data['gain %']:.2f}%, "
+                        f"strategy={trade.strategy.name}"
+                    )
+        else:
+            # ── GRACEFUL EXIT: positions stay open at broker ──────────
+            open_count = sum(len(t.active_trades) for t in tickers)
+            system_logger.info(
+                f"Graceful exit: {open_count} position(s) left open at broker"
+            )
 
         broker.stopThr()
         log_session_summary(tickers)
-        # export all trades (completed + still-open) to CSV
+
+        # Export all trades (completed + still-open) to CSV
         all_trades = {
             t.symbol: [trade.data for trade in t.trade_history + t.active_trades]
             for t in tickers
@@ -358,10 +398,19 @@ if __name__ == "__main__":
             os.makedirs("Trades", exist_ok=True)
             ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             printTradeDict(all_trades, f"Trades/live_trades_{ts}.csv")
-        log_functions.log_event("session_end", mode="live")
+
+        log_functions.log_event(
+            "session_end",
+            mode="terminate" if _force_close else "graceful",
+        )
         util.moveLogs(log_dir=log_dir)
     except Exception:
         logger.exception("Fatal error in main process")
         raise
     finally:
+        # Clean up PID file
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
         log_functions.stop_logging_process(log_queue, log_proc)
