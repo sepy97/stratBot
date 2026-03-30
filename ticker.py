@@ -1,3 +1,4 @@
+import os
 import threading
 import logging
 import queue
@@ -133,7 +134,9 @@ class Ticker(threading.Thread):
             for t in closed:
                 self.active_trades.remove(t)
 
-            # 4. Check for new entry signals (checked every update, regardless of open trades)
+            # 4. Check for new entry signals (skip if paused)
+            if os.path.exists(os.path.expanduser("~/.stratbot/pause.flag")):
+                continue  # Paused: skip entry signals, keep managing open trades
             if len(chart.get('d', [])) >= 2:
                 for s in self.strategies:
                     if s.screenTrade(chart, None):

@@ -29,7 +29,8 @@ market_logger = logging.getLogger(log_functions.CHANNEL_MARKET)
 
 
 def scheduling(
-    symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager, time_quant=5
+    symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager,
+    tickers=None, time_quant=5,
 ):
     current_time = datetime.now()
     DR_queue.put(symbols)
@@ -46,7 +47,53 @@ def scheduling(
     with TF_condition:
         TF_condition.notify_all()
     # print("Timeframe signal sent to all tickers", flush=True)
+    if tickers is not None:
+        _write_status(tickers, market_time_manager)
     return
+
+
+_bot_start_time = time.time()
+PAUSE_FLAG = Path.home() / ".stratbot" / "pause.flag"
+STATUS_FILE = Path.home() / ".stratbot" / "status.json"
+
+
+def _write_status(tickers, market_time_manager):
+    """Write live status to ~/.stratbot/status.json every scheduler tick."""
+    try:
+        paused = PAUSE_FLAG.exists()
+        now_ts = int(time.time())
+        open_positions = []
+        for t in tickers:
+            for tr in t.active_trades:
+                open_positions.append({
+                    "symbol": tr.data["symbol"],
+                    "direction": tr.direction.name,
+                    "entry": tr.data["entryPrice"],
+                    "days_open": tr.data["daysOpen"],
+                })
+        status = {
+            "pid": os.getpid(),
+            "state": "paused" if paused else "running",
+            "paused": paused,
+            "timestamp": now_ts,
+            "uptime_seconds": int(now_ts - _bot_start_time),
+            "market_open": market_time_manager.isMarketOpen(now_ts),
+            "tickers_active": len(tickers),
+            "trades_open": len(open_positions),
+            "trades_closed_today": sum(len(t.trade_history) for t in tickers),
+            "realized_pnl": round(
+                sum(tr.realized_pnl() or 0 for t in tickers for tr in t.trade_history),
+                2,
+            ),
+            "open_positions": open_positions,
+        }
+        STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(STATUS_FILE) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(status, f, indent=2)
+        os.replace(tmp, STATUS_FILE)
+    except Exception:
+        pass  # Status write is best-effort, never crash the scheduler
 
 
 def log_session_summary(tickers):
@@ -405,7 +452,8 @@ if __name__ == "__main__":
                 TF,
                 TF_condition,
                 market_time_manager,
-                time_quant,
+                tickers=tickers,
+                time_quant=time_quant,
             ),
             "interval",
             seconds=5,
