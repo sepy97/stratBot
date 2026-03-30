@@ -10,6 +10,7 @@ An algorithmic trading bot built on the **STRAT methodology** — a candle-class
 - [Project Structure](#project-structure)
 - [Setup](#setup)
 - [Running the Live Bot](#running-the-live-bot)
+- [CLI Control](#cli-control)
 - [Running the Backtester](#running-the-backtester)
 - [Strategies](#strategies)
 - [Configuration](#configuration)
@@ -51,7 +52,8 @@ Multiple timeframe alignment is used as a filter: the daily, weekly, and monthly
 
 ```
 stratBot/
-├── Main.py                  # Live trading entry point
+├── Main.py                  # Live trading entry point (multi-day continuous loop)
+├── stratbot                 # CLI control utility (start/stop/kill/status/pause/resume)
 ├── BackTester.py            # Backtesting engine entry point
 ├── BackTestStrategy.py      # Core strategy logic (shared by live + backtest)
 ├── strategy.py              # Live trading wrapper around BackTestStrategy
@@ -74,6 +76,7 @@ stratBot/
 ├── Watchlists/
 │   └── NASDAQ100_2025.csv   # Symbols to trade/backtest
 ├── Trades/                  # Backtest and live trade output CSVs
+├── docs/diagrams/           # Architecture diagrams (D2 source + PNG)
 └── requirements.txt
 ```
 
@@ -116,24 +119,105 @@ alpaca_config = {
 
 ## Running the Live Bot
 
+The bot runs continuously across multiple trading days. It trades during market hours and sleeps overnight, waking up 20 minutes before the next market open to refresh candle data.
+
+### Start
+
 ```bash
-python Main.py
+./stratbot start            # Background the bot
+./stratbot start --fresh    # Ignore saved state, start clean
+python Main.py              # Or run in foreground (for tmux/systemd)
 ```
 
-The bot will:
+On startup the bot will:
 
 1. Load the watchlist from `Watchlists/NASDAQ100_2025.csv`
-2. Fetch the last 4 historical bars per timeframe (m5, m15, m30, m60, d, w, m, q) for each symbol to seed the candle windows
-3. Start one `Ticker` thread per symbol plus `DataRetrieval` and `Broker` threads
-4. Poll Alpaca for the latest bars every 5 seconds via APScheduler
-5. Detect timeframe candle flips and pass fresh candles to each `Ticker`
-6. Evaluate strategy signals and enter/exit trades via the `Broker` queue
-7. Shut down gracefully after 6 hours, force-closing any remaining open positions
-8. Write a session summary (win rate, total gain, per-strategy stats) to `trades.log`
+2. Fetch historical bars per timeframe (m5, m15, m30, m60, d, w, m, q) for each symbol
+3. Resume open trades from `~/.stratbot/session_state.json` if a previous session was saved
+4. Start one `Ticker` thread per symbol plus `DataRetrieval` and `Broker` threads
+5. Poll Alpaca for latest bars every 5 seconds via APScheduler
+6. Trade during market hours, sleep overnight, repeat
 
 **Strategies active by default:** `BasicDailyAS` and `StratLab2dGM` across all NASDAQ 100 symbols.
 
 > **Note:** `Broker.py` currently only logs intended orders — actual Alpaca order placement is not yet implemented.
+
+### Stop and Resume
+
+```bash
+./stratbot stop             # Graceful exit: save state, positions stay open at broker
+```
+
+The bot saves all active trades to `~/.stratbot/session_state.json`. On next startup, it automatically loads the saved state, reconciles with the broker, fetches fresh candles, and continues trading.
+
+### Kill Switch
+
+```bash
+./stratbot kill             # Force-close ALL positions, delete state, clean slate
+```
+
+This force-closes every open position at the last known price, deletes the session state, and exits. Use this when you want to stop trading entirely.
+
+---
+
+## CLI Control
+
+The `stratbot` CLI controls the running bot via Unix signals and file flags.
+
+```bash
+./stratbot start [--fresh]   # Start bot in background (--fresh ignores saved state)
+./stratbot stop              # Graceful exit — save state, keep positions at broker
+./stratbot kill              # Force-close all positions and exit
+./stratbot status            # Show open positions, P&L, uptime, market status
+./stratbot pause             # Stop new entries, keep managing open trades
+./stratbot resume            # Resume new entries after pause
+```
+
+### How It Works
+
+| Command | Mechanism |
+|---------|-----------|
+| `start` | Spawns `python Main.py` in background, writes PID to `~/.stratbot/run.pid` |
+| `stop` | Sends SIGTERM to bot process; bot saves state and exits gracefully |
+| `kill` | Sends SIGUSR1 to bot process; bot force-closes all positions and exits |
+| `status` | Reads `~/.stratbot/status.json` (updated every 5s by the bot) |
+| `pause` | Creates `~/.stratbot/pause.flag`; bot skips new entries but keeps managing open trades |
+| `resume` | Removes the pause flag file |
+
+### Status Output
+
+```
+  State     : running
+  Uptime    : 2h 47m
+  Market    : OPEN
+  Tickers   : 98
+  Open      : 3 trade(s)
+  Closed    : 12 today
+  P&L       : $245.67
+
+  Open positions:
+    AAPL    LONG   entry $150.25  day 1
+    MSFT    SHORT  entry $380.00  day 0
+    NVDA    LONG   entry $820.50  day 2
+```
+
+### Startup Flags
+
+```bash
+python Main.py              # Auto-resumes if session_state.json exists
+python Main.py --fresh      # Ignores saved state, starts clean
+python Main.py --terminate  # Force-closes saved positions and exits (without running)
+```
+
+### Runtime Files
+
+```
+~/.stratbot/
+├── run.pid              # Bot process ID (deleted on clean exit)
+├── status.json          # Live status (updated every 5s by the bot)
+├── pause.flag           # Exists = paused (no new entries, open trades managed)
+└── session_state.json   # Active trades snapshot (written on graceful stop + every 5min)
+```
 
 ---
 
@@ -309,7 +393,7 @@ Each line is a self-contained JSON object:
 {"seq": 2, "ts": "2026-03-27T10:15:23", "event": "entry", "symbol": "AAPL", "strategy": "BasicDailyAS", "direction": "LONG", "triggerPrice": 150.00, "stop": 148.50, "RR": 2.1}
 {"seq": 3, "ts": "2026-03-27T10:45:10", "event": "stop_update", "symbol": "AAPL"}
 {"seq": 4, "ts": "2026-03-27T14:30:00", "event": "exit", "symbol": "AAPL", "strategy": "BasicDailyAS", "direction": "LONG", "exitPrice": 153.00, "stopType": "trailing", "gain_pct": 2.0}
-{"seq": 5, "ts": "2026-03-27T16:00:00", "event": "session_end", "mode": "live"}
+{"seq": 5, "ts": "2026-03-27T16:00:00", "event": "session_end", "mode": "graceful"}
 ```
 
 | Field | Description |
@@ -344,31 +428,46 @@ All trade records (both live and backtest) are written to the `Trades/` director
 
 ## Architecture
 
+See `docs/diagrams/` for rendered architecture diagrams.
+
+### Live Trading
+
 ```
-┌──────────────────────────────────────────────────────────────┐   ┌──────────────────────────────┐
-│                      Main.py (live)                          │   │      BackTester.py           │
-│                                                              │   │                              │
-│  APScheduler (5s)                                            │   │  runBacktest()               │
-│       │                                                      │   │       │                      │
-│  scheduling() ──► DataRetrieval (Thread)                     │   │  mp.Pool                     │
-│                        │                                     │   │       │                      │
-│              ticker_queues[symbol]                           │   │  backtest_symbol() (per sym) │
-│                        │                                     │   │       │                      │
-│          ┌─────────────┼─────────────┐                       │   │  enterTrade() / updateTrade()│
-│          ▼             ▼             ▼                       │   │       │                      │
-│   Ticker(AAPL)   Ticker(MSFT)  Ticker(NVDA)  …(one/symbol)  │   │  alpaca_chart.DataRetrieval  │
-│   ┌───────────┐  ┌───────────┐ ┌───────────┐               │   │       │                      │
-│   │ candles{} │  │ candles{} │ │ candles{} │               │   │  ChartDB (SQLite cache)      │
-│   │strategies │  │strategies │ │strategies │               │   └──────────────────────────────┘
-│   │  trades[] │  │  trades[] │ │  trades[] │               │
-│   └─────┬─────┘  └─────┬─────┘ └─────┬─────┘               │
-│         └──────────────┼──────────────┘                      │
-│                        │ Trade objects                        │
-│                  broker_queue                                 │
-│                        │                                     │
-│                  Broker (Thread)                              │
-│                  [stub — logs only]                           │
-└──────────────────────────────────────────────────────────────┘
+User ──► stratbot CLI ──signals/flags──► Main.py (the bot)
+                                            │
+                                 ┌──────────┴──────────┐
+                                 │   APScheduler (5s)   │
+                                 │         │            │
+                                 │   DataRetrieval      │
+                                 │         │            │
+                                 │   Ticker (×N)        │
+                                 │         │            │
+                                 │      Broker          │
+                                 └──────────┬──────────┘
+                                            │
+                            ┌───────────────┼───────────────┐
+                            ▼               ▼               ▼
+                       Alpaca API    ~/.stratbot/       Log Files
+                     (data+orders)  (state+status)   (app/trades/jsonl)
+```
+
+- The bot runs continuously: trades during market hours, sleeps overnight
+- `stratbot` CLI sends signals (SIGTERM/SIGUSR1) and manages file flags for control
+- State is checkpointed to `~/.stratbot/session_state.json` every 5 minutes and on graceful exit
+- On resume, saved trades are reconstructed and reconciled with the broker
+
+### Backtesting
+
+```
+BackTester.py
+    │
+    ├── mp.Pool (parallel per symbol)
+    │       │
+    │       ├── backtest_symbol() ──► enterTrade() / updateTrade()
+    │       │
+    │       └── alpaca_chart.DataRetrieval ──► ChartDB (SQLite cache)
+    │
+    └── Trades/*.csv (results)
 ```
 
 ---
