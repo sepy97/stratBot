@@ -205,6 +205,30 @@ def _handle_terminate(signum, frame):
 
 # entry point for the program
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="stratBot live trading")
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="Ignore saved session state, start clean",
+    )
+    parser.add_argument(
+        "--terminate", action="store_true",
+        help="Force-close all saved positions and exit immediately",
+    )
+    cli_args = parser.parse_args()
+
+    # Handle --terminate: close saved positions without starting the bot
+    if cli_args.terminate:
+        saved = _load_session()
+        if saved and saved.get("tickers"):
+            symbols = [s for s, v in saved["tickers"].items() if v.get("active_trades")]
+            print(f"Terminate: {len(symbols)} symbol(s) with open trades: {symbols}")
+            print("TODO: broker force-close not yet wired — delete state file only")
+        SESSION_STATE_FILE.unlink(missing_ok=True)
+        print("Session state deleted.")
+        raise SystemExit(0)
+
     # INITIALIZATION
 
     # Register signal handlers before anything else
@@ -324,6 +348,42 @@ if __name__ == "__main__":
         system_logger.info(
             f"Initialized {len(valid_watchlist)}/{len(watchlist)} symbols successfully."
         )
+
+        # ── Resume from saved state ──────────────────────────────────
+        if not cli_args.fresh:
+            saved = _load_session()
+            if saved and saved.get("tickers"):
+                from Trade import Trade
+
+                resumed_count = 0
+                for t in tickers:
+                    saved_ticker = saved["tickers"].get(t.symbol)
+                    if not saved_ticker or not saved_ticker.get("active_trades"):
+                        continue
+                    for trade_dict in saved_ticker["active_trades"]:
+                        strat_name = trade_dict.pop("strategy_name", None)
+                        strategy_obj = next(
+                            (s for s in t.strategies if s.name == strat_name), None
+                        )
+                        if strategy_obj is None:
+                            logger.warning(
+                                f"{t.symbol}: unknown strategy '{strat_name}' "
+                                f"in saved state, skipping trade"
+                            )
+                            continue
+                        trade = Trade.from_dict(trade_dict, strategy_obj)
+                        t.active_trades.append(trade)
+                        resumed_count += 1
+                if resumed_count:
+                    system_logger.info(
+                        f"Resumed {resumed_count} open trade(s) from saved state"
+                    )
+                # Archive the state file now that we've loaded it
+                try:
+                    SESSION_STATE_FILE.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
         for t in tickers:
             # each thread should first initialize the ticker, then start waiting for the signal from the data retriever
             t.start()
