@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import queue
@@ -123,6 +124,61 @@ def _refresh_candles(tickers, data_retriever):
                 logger.warning(f"{t.symbol}: failed to refresh candles")
         except Exception as e:
             logger.warning(f"{t.symbol}: error refreshing candles: {e}")
+
+
+# ── State persistence ────────────────────────────────────────────────────────
+
+SESSION_STATE_FILE = Path.home() / ".stratbot" / "session_state.json"
+
+
+def _save_session(tickers):
+    """Save active trades to JSON for resume on next startup.
+
+    Uses atomic write (temp file → os.replace) to prevent corruption.
+    """
+    state = {
+        "version": 1,
+        "saved_at": int(time.time()),
+        "tickers": {},
+    }
+    for t in tickers:
+        if t.active_trades:
+            state["tickers"][t.symbol] = {
+                "active_trades": [
+                    {
+                        **tr.data,
+                        "strategy_name": tr.strategy.name,
+                        "direction": tr.direction.name,
+                    }
+                    for tr in t.active_trades
+                ]
+            }
+    SESSION_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(SESSION_STATE_FILE) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=2, default=str)
+    os.replace(tmp, SESSION_STATE_FILE)
+    system_logger.info(
+        f"Session state saved: {sum(len(v['active_trades']) for v in state['tickers'].values())} trade(s)"
+    )
+
+
+def _load_session():
+    """Load saved session state, or return None if no state file exists."""
+    if not SESSION_STATE_FILE.exists():
+        return None
+    try:
+        with open(SESSION_STATE_FILE) as f:
+            state = json.load(f)
+        age_hours = (time.time() - state.get("saved_at", 0)) / 3600
+        if age_hours > 24:
+            system_logger.warning(
+                f"Session state is {age_hours:.1f}h old — consider --fresh"
+            )
+        return state
+    except (json.JSONDecodeError, KeyError) as e:
+        system_logger.warning(f"Corrupt session state, ignoring: {e}")
+        return None
 
 
 # ── Signal-based shutdown ─────────────────────────────────────────────────────
@@ -296,6 +352,12 @@ if __name__ == "__main__":
             timezone="America/Los_Angeles",
             start_date=proper_start_time,
         )
+        scheduler.add_job(
+            lambda: _save_session(tickers),
+            "interval",
+            minutes=5,
+            id="periodic_state_save",
+        )
         scheduler.start()
 
         # ── Market-aware main loop ────────────────────────────────────
@@ -381,6 +443,7 @@ if __name__ == "__main__":
                     )
         else:
             # ── GRACEFUL EXIT: positions stay open at broker ──────────
+            _save_session(tickers)
             open_count = sum(len(t.active_trades) for t in tickers)
             system_logger.info(
                 f"Graceful exit: {open_count} position(s) left open at broker"
@@ -398,6 +461,13 @@ if __name__ == "__main__":
             os.makedirs("Trades", exist_ok=True)
             ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             printTradeDict(all_trades, f"Trades/live_trades_{ts}.csv")
+
+        if _force_close:
+            # Delete state so next start is fresh
+            try:
+                SESSION_STATE_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
 
         log_functions.log_event(
             "session_end",
