@@ -1,3 +1,4 @@
+from zoneinfo import ZoneInfo
 import pandas as pd
 import pandas_market_calendars as mcal
 from datetime import datetime, timedelta, date
@@ -18,10 +19,21 @@ class MarketTimeManager:
     def __init__(self):
 
         self.trading_client = TradingClient(alpaca_config['key'], alpaca_config['secret_key'])  # or paper=False for live
-        tz = pytz.timezone('America/New_York')
+        self.tz = ZoneInfo("America/New_York")
+        
+        #tz = pytz.timezone('America/New_York')
         calendar = cast(List[Calendar], self.trading_client.get_calendar())
-        self.calendar = pd.DataFrame([{'date': c.date, 'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in calendar])
+        self.calendar = pd.DataFrame([
+            {
+                'date': c.date,
+                'market_open': c.open.replace(tzinfo=self.tz),
+                'market_close': c.close.replace(tzinfo=self.tz)
+            }
+            for c in calendar
+        ])
+
         self.calendar.index = self.calendar['date']
+        #self.calendar = pd.DataFrame([{'date': c.date, 'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in calendar])
         #if dateRange is None:
         #    self.calendar_cache = None
         #else:
@@ -109,7 +121,29 @@ class MarketTimeManager:
         # Note - if timestamp is equal to market close then return false 
         marketOpenClose = self.getOpenCloseAtDay(timestamp_s)
         return (marketOpenClose["open"] <= timestamp_s) and (marketOpenClose["close"] > timestamp_s)
+    
+    def isMarketOpen(self, dt: datetime | int | float | None = None) -> bool:
+        if dt is None:
+            dt = datetime.now(self.tz)
+        elif isinstance(dt, (int, float)):
+            dt = datetime.fromtimestamp(dt, self.tz)
+        else:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=self.tz)
+            else:
+                dt = dt.astimezone(self.tz)
+        date = dt.date()
+
+        # Not a trading day
+        if date not in self.calendar.index:
+            return False
+
+        row = self.calendar.loc[date]
+
+        return row['market_open'] <= dt <= row['market_close']
         
+        #marketOpenClose = self.getOpenCloseAtDay(int(dt.timestamp()))
+        #return (marketOpenClose["open"] <= int(dt.timestamp())) and (marketOpenClose["close"] > int(dt.timestamp()))
     def getCandleChange(self, timestamp_s, timeframe):  #TODO: convert to use Alpaca client
         # At all timeframes:
         #    candleEndTimeStamp_s - return timestamp of close of candle containing 'timestamp_s' if it is within market hours, or close of most recent candle
@@ -508,7 +542,7 @@ class MarketTimeManager:
     
 if __name__ == "__main__":
     #TF = 'm15'
-    timestamp_dt = pd.to_datetime("2024-1-2 1:00:00").tz_localize('America/Los_Angeles')
+    timestamp_dt = pd.to_datetime("2024-1-2 12:59:00").tz_localize('America/Los_Angeles')
     timestamp_s = timestamp_dt.timestamp()
     TF = 'm15'
     mtm = MarketTimeManager()
@@ -528,4 +562,13 @@ if __name__ == "__main__":
     for post_candle in candleSet['post']:
         print(post_candle)
         #print(tuple(map(lambda x: x.tz_convert('America/Los_Angeles'), post_candle)))
+    if mtm.isMarketOpen(timestamp_dt):
+        print('Market is open at the timestamp ' + timestamp_dt.strftime('%Y-%m-%d %H:%M:%S %Z'))
+    else:
+        print('Market is closed at the timestamp ' + timestamp_dt.strftime('%Y-%m-%d %H:%M:%S %Z'))
+    
+    if mtm.isMarketOpen():
+        print('It is ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z') + ' and the market is open.')
+    else:
+        print('It is ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z') + ' and the market is closed.')
    
