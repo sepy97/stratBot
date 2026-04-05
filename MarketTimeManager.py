@@ -6,7 +6,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetCalendarRequest
 from alpaca.trading.models import Calendar
 from alpaca_config import alpaca_config
-import pytz
+#import pytz
 from typing import List, Tuple, Dict, Any, cast
 import logging
 
@@ -117,10 +117,10 @@ class MarketTimeManager:
             result["close"] = int(closeTime.timestamp())
         return result
         
-    def isMarketOpen(self, timestamp_s): #TODO: convert to use Alpaca client
-        # Note - if timestamp is equal to market close then return false 
-        marketOpenClose = self.getOpenCloseAtDay(timestamp_s)
-        return (marketOpenClose["open"] <= timestamp_s) and (marketOpenClose["close"] > timestamp_s)
+    #def isMarketOpen(self, timestamp_s): #TODO: convert to use Alpaca client
+    #    # Note - if timestamp is equal to market close then return false 
+    #    marketOpenClose = self.getOpenCloseAtDay(timestamp_s)
+    #    return (marketOpenClose["open"] <= timestamp_s) and (marketOpenClose["close"] > timestamp_s)
     
     def isMarketOpen(self, dt: datetime | int | float | None = None) -> bool:
         if dt is None:
@@ -140,7 +140,7 @@ class MarketTimeManager:
 
         row = self.calendar.loc[date]
 
-        return row['market_open'] <= dt <= row['market_close']
+        return row['market_open'] <= dt < row['market_close']
         
         #marketOpenClose = self.getOpenCloseAtDay(int(dt.timestamp()))
         #return (marketOpenClose["open"] <= int(dt.timestamp())) and (marketOpenClose["close"] > int(dt.timestamp()))
@@ -542,7 +542,7 @@ class MarketTimeManager:
     
 if __name__ == "__main__":
     #TF = 'm15'
-    timestamp_dt = pd.to_datetime("2024-1-2 12:59:00").tz_localize('America/Los_Angeles')
+    timestamp_dt = pd.to_datetime("2024-1-2 13:00:00").tz_localize('America/Los_Angeles')
     timestamp_s = timestamp_dt.timestamp()
     TF = 'm15'
     mtm = MarketTimeManager()
