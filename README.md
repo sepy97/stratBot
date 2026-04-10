@@ -177,7 +177,7 @@ The `stratbot` CLI controls the running bot via Unix signals and file flags.
 
 | Command | Mechanism |
 |---------|-----------|
-| `start` | Spawns `python Main.py` in background, writes PID to `~/.stratbot/run.pid` |
+| `start` | Spawns `Main.py` via project venv Python in background, writes PID to `~/.stratbot/run.pid` |
 | `stop` | Sends SIGTERM to bot process; bot saves state and exits gracefully |
 | `kill` | Sends SIGUSR1 to bot process; bot force-closes all positions and exits |
 | `status` | Reads `~/.stratbot/status.json` (updated every 5s by the bot) |
@@ -196,9 +196,9 @@ The `stratbot` CLI controls the running bot via Unix signals and file flags.
   P&L       : $245.67
 
   Open positions:
-    AAPL    LONG   entry $150.25  day 1
-    MSFT    SHORT  entry $380.00  day 0
-    NVDA    LONG   entry $820.50  day 2
+    AAPL    LONG   entry $150.25  day 1  BasicDailyAS
+    MSFT    SHORT  entry $380.00  day 0  BasicDailyAS
+    NVDA    LONG   entry $820.50  day 2  StratLab2dGM
 ```
 
 ### Startup Flags

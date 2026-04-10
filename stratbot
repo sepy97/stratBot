@@ -14,21 +14,47 @@ STRATBOT_DIR = Path.home() / ".stratbot"
 PID_FILE = STRATBOT_DIR / "run.pid"
 STATUS_FILE = STRATBOT_DIR / "status.json"
 PAUSE_FLAG = STRATBOT_DIR / "pause.flag"
-BOT_SCRIPT = Path(__file__).resolve().parent / "Main.py"
+PROJECT_ROOT = Path(__file__).resolve().parent
+BOT_SCRIPT = PROJECT_ROOT / "Main.py"
+VENV_PYTHON = PROJECT_ROOT / "venv" / "bin" / "python"
 
 
 def _read_pid():
-    """Read and validate the PID file. Returns pid or None."""
-    if not PID_FILE.exists():
-        return None
-    pid = int(PID_FILE.read_text().strip())
+    """Read and validate the PID file. Falls back to pgrep if PID file is missing."""
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text().strip())
+            os.kill(pid, 0)  # check if process exists
+            return pid
+        except (ProcessLookupError, ValueError):
+            # Stale PID — process no longer running
+            PID_FILE.unlink(missing_ok=True)
+
+    # Fallback: find orphaned bot process via pgrep
     try:
-        os.kill(pid, 0)  # check if process exists
-        return pid
-    except ProcessLookupError:
-        # Stale PID — process no longer running
-        PID_FILE.unlink(missing_ok=True)
-        return None
+        result = subprocess.run(
+            ["pgrep", "-f", "python.*Main.py"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            pids = [int(p) for p in result.stdout.strip().split('\n') if p]
+            # Filter out this script's own PID and parent
+            own = {os.getpid(), os.getppid()}
+            pids = [p for p in pids if p not in own]
+            if pids:
+                pid = pids[0]
+                try:
+                    os.kill(pid, 0)  # verify alive
+                except ProcessLookupError:
+                    return None
+                # Restore the PID file
+                PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+                PID_FILE.write_text(str(pid))
+                return pid
+    except Exception:
+        pass
+
+    return None
 
 
 def cmd_start(args):
@@ -37,7 +63,8 @@ def cmd_start(args):
         print(f"stratbot already running (PID {pid})")
         return 1
 
-    cmd = [sys.executable, str(BOT_SCRIPT)]
+    python = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
+    cmd = [python, str(BOT_SCRIPT)]
     if args.fresh:
         cmd.append("--fresh")
 
@@ -67,6 +94,8 @@ def cmd_stop(args):
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
+            STATUS_FILE.unlink(missing_ok=True)
+            PAUSE_FLAG.unlink(missing_ok=True)
             print("stratbot stopped.")
             return 0
 
@@ -99,6 +128,8 @@ def cmd_kill(args):
     except ProcessLookupError:
         pass
     PID_FILE.unlink(missing_ok=True)
+    STATUS_FILE.unlink(missing_ok=True)
+    PAUSE_FLAG.unlink(missing_ok=True)
     print("stratbot force-killed.")
     return 0
 
@@ -111,6 +142,12 @@ def cmd_status(args):
             print(f"stratbot running (PID {pid}) but no status file yet")
         else:
             print("stratbot is not running")
+        return 0
+
+    # Cross-check: status file exists but no live process → stale data
+    if not pid:
+        STATUS_FILE.unlink(missing_ok=True)
+        print("stratbot is not running")
         return 0
 
     status = json.loads(STATUS_FILE.read_text())
@@ -135,7 +172,8 @@ def cmd_status(args):
         for p in positions:
             print(
                 f"    {p['symbol']:6s}  {p['direction']:5s}  "
-                f"entry ${p['entry']:.2f}  day {p['days_open']}"
+                f"entry ${p['entry']:.2f}  day {p['days_open']}  "
+                f"{p.get('strategy', '')}"
             )
     return 0
 

@@ -70,6 +70,7 @@ def _write_status(tickers, market_time_manager):
                     "direction": tr.direction.name,
                     "entry": tr.data["entryPrice"],
                     "days_open": tr.data["daysOpen"],
+                    "strategy": tr.strategy.name,
                 })
         status = {
             "pid": os.getpid(),
@@ -586,9 +587,10 @@ if __name__ == "__main__":
         logger.exception("Fatal error in main process")
         raise
     finally:
-        # Clean up PID file
+        # Clean up PID and status files
         try:
             pid_file.unlink(missing_ok=True)
+            STATUS_FILE.unlink(missing_ok=True)
         except Exception:
             pass
         log_functions.stop_logging_process(log_queue, log_proc)
