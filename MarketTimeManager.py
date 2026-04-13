@@ -129,9 +129,10 @@ class MarketTimeManager:
             dt = datetime.fromtimestamp(dt, self.tz)
         else:
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=self.tz)
+                raise ValueError(f"isMarketOpen requires a timezone-aware datetime; received a naive datetime: {dt!r}. ")
             else:
                 dt = dt.astimezone(self.tz)
+                
         date = dt.date()
 
         # Not a trading day
@@ -567,8 +568,9 @@ if __name__ == "__main__":
     else:
         print('Market is closed at the timestamp ' + timestamp_dt.strftime('%Y-%m-%d %H:%M:%S %Z'))
     
+    current_time = datetime.now(mtm.tz)
     if mtm.isMarketOpen():
-        print('It is ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z') + ' and the market is open.')
+        print('It is ' + current_time.strftime('%Y-%m-%d %H:%M:%S %Z') + ' and the market is open.')
     else:
-        print('It is ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z') + ' and the market is closed.')
+        print('It is ' + current_time.strftime('%Y-%m-%d %H:%M:%S %Z') + ' and the market is closed.')
    
