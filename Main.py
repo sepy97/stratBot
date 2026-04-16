@@ -84,8 +84,10 @@ def _write_status(tickers, market_time_manager):
                 for t in tickers
                 for tr in t.trade_history
                 if (
-                    (exit_ts := tr.data.get("exitTimestamp_sec")) is not None
-                    and market_day_open <= exit_ts < market_day_close
+                    tr.data.get("exitTimestamp_sec") is not None
+                    and market_day_open
+                    <= tr.data.get("exitTimestamp_sec")
+                    < market_day_close
                 )
             )
 
