@@ -54,12 +54,12 @@ def scheduling(
 
 _bot_start_time = time.time()
 STATUS_FILE = Path.home() / ".stratbot" / "status.json"
-_last_status_write_error_log = 0.0
+_last_status_write_error_time = 0.0
 
 
 def _write_status(tickers, market_time_manager):
     """Write live status to ~/.stratbot/status.json every scheduler tick."""
-    global _last_status_write_error_log
+    global _last_status_write_error_time
     try:
         paused = util.PAUSE_FLAG.exists()
         now_ts = int(time.time())
@@ -98,8 +98,8 @@ def _write_status(tickers, market_time_manager):
         # Status write is best-effort, never crash the scheduler.
         # Rate-limit logs to avoid flooding if a persistent issue occurs.
         now = time.time()
-        if now - _last_status_write_error_log >= 60:
-            _last_status_write_error_log = now
+        if now - _last_status_write_error_time >= 60:
+            _last_status_write_error_time = now
             system_logger.warning(f"Failed to write status file: {exc}", exc_info=True)
 
 
