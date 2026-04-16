@@ -419,7 +419,13 @@ if __name__ == "__main__":
                                 f"in saved state, skipping trade"
                             )
                             continue
-                        trade = Trade.from_dict(trade_dict, strategy_obj)
+                        try:
+                            trade = Trade.from_dict(trade_dict, strategy_obj)
+                        except ValueError as exc:
+                            logger.warning(
+                                f"{t.symbol}: {exc}, skipping trade from saved state"
+                            )
+                            continue
                         t.active_trades.append(trade)
                         resumed_count += 1
                 if resumed_count:

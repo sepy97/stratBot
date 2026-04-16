@@ -46,7 +46,13 @@ class Trade:
         trade.strategy = strategy
         # Convert direction string back to enum if it was serialised
         if isinstance(trade.data.get('direction'), str):
-            trade.data['direction'] = util.TickerStatus[trade.data['direction']]
+            try:
+                trade.data['direction'] = util.TickerStatus[trade.data['direction']]
+            except KeyError as exc:
+                raise ValueError(
+                    f"invalid trade direction '{trade.data['direction']}' "
+                    f"for symbol '{trade.data.get('symbol', 'UNKNOWN')}'"
+                ) from exc
         return trade
 
     # ── active trade management ───────────────────────────────────────────────
