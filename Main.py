@@ -74,11 +74,11 @@ def _write_status(tickers, market_time_manager):
                     "strategy": tr.strategy.name,
                 })
         market_day = market_time_manager.getOpenCloseAtDay(now_ts)
-        market_day_open = market_day["open"]
-        market_day_close = market_day["close"]
-        has_market_day_window = market_day_close > market_day_open
+        market_day_open = market_day.get("open", 0) if isinstance(market_day, dict) else 0
+        market_day_close = market_day.get("close", 0) if isinstance(market_day, dict) else 0
+        has_valid_market_day_window = market_day_close > market_day_open
         trades_closed_today = 0
-        if has_market_day_window:
+        if has_valid_market_day_window:
             for t in tickers:
                 for tr in t.trade_history:
                     exit_ts = tr.data.get("exitTimestamp_sec")
