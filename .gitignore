@@ -11,6 +11,7 @@ Trades old
 *.db-shm
 alphavantage_config.py
 .vscode
+.vscode/settings.json
 .idea
 *.xml
 *.sml
