@@ -73,6 +73,17 @@ def _write_status(tickers, market_time_manager):
                     "days_open": tr.data["daysOpen"],
                     "strategy": tr.strategy.name,
                 })
+        market_day = market_time_manager.getOpenCloseAtDay(now_ts)
+        market_day_open = market_day["open"]
+        market_day_close = market_day["close"]
+        trades_closed_today = sum(
+            1
+            for t in tickers
+            for tr in t.trade_history
+            if market_day_open > 0
+            and market_day_open <= tr.data.get("exitTimestamp_sec", -1) < market_day_close
+        )
+
         status = {
             "pid": os.getpid(),
             "state": "paused" if paused else "running",
@@ -82,7 +93,7 @@ def _write_status(tickers, market_time_manager):
             "market_open": market_time_manager.isMarketOpen(now_ts),
             "tickers_active": len(tickers),
             "trades_open": len(open_positions),
-            "trades_closed_today": sum(len(t.trade_history) for t in tickers),
+            "trades_closed_today": trades_closed_today,
             "realized_pnl": round(
                 sum(tr.realized_pnl() or 0 for t in tickers for tr in t.trade_history),
                 2,
