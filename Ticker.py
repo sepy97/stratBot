@@ -135,7 +135,7 @@ class Ticker(threading.Thread):
                 self.active_trades.remove(t)
 
             # 4. Check for new entry signals (skip if paused)
-            if os.path.exists(os.path.expanduser("~/.stratbot/pause.flag")):
+            if util.PAUSE_FLAG.exists():
                 continue  # Paused: skip entry signals, keep managing open trades
             if len(chart.get('d', [])) >= 2:
                 for s in self.strategies:

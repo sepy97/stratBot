@@ -26,6 +26,8 @@ import secrets
 #timeframe_LUT = {'q': (91*24*60*60, "year", "monthly", 1), 'm': (30*24*60*60, "year", "monthly", 1), 'w': (7*24*60*60, "month", "weekly", 1), 'd': (24*60*60, "month", "daily", 1), 'm60': (60*60, "day", "minute", 30), 'm30': (30*60, "day", "minute", 30), 'm15': (15*60, "day", "minute", 15), 'm5': (5*60, "day", "minute", 5)}
 
 request_retry_num = 10
+STRATBOT_DIR = Path.home() / ".stratbot"
+PAUSE_FLAG = STRATBOT_DIR / "pause.flag"
 
 class TickerStatus(Enum):
     OUT = 1

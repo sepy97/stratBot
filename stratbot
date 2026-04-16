@@ -118,7 +118,7 @@ def cmd_kill(args):
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
-            print("stratbot terminated. All positions closed.")
+            print("stratbot terminated. Close signals sent; broker-side closure not verified.")
             return 0
 
     # Escalate to SIGKILL

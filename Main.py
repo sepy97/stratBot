@@ -53,14 +53,15 @@ def scheduling(
 
 
 _bot_start_time = time.time()
-PAUSE_FLAG = Path.home() / ".stratbot" / "pause.flag"
 STATUS_FILE = Path.home() / ".stratbot" / "status.json"
+_last_status_write_error_log = 0.0
 
 
 def _write_status(tickers, market_time_manager):
     """Write live status to ~/.stratbot/status.json every scheduler tick."""
+    global _last_status_write_error_log
     try:
-        paused = PAUSE_FLAG.exists()
+        paused = util.PAUSE_FLAG.exists()
         now_ts = int(time.time())
         open_positions = []
         for t in tickers:
@@ -93,8 +94,13 @@ def _write_status(tickers, market_time_manager):
         with open(tmp, "w") as f:
             json.dump(status, f, indent=2)
         os.replace(tmp, STATUS_FILE)
-    except Exception:
-        pass  # Status write is best-effort, never crash the scheduler
+    except Exception as exc:
+        # Status write is best-effort, never crash the scheduler.
+        # Rate-limit logs to avoid flooding if a persistent issue occurs.
+        now = time.time()
+        if now - _last_status_write_error_log >= 60:
+            _last_status_write_error_log = now
+            system_logger.warning(f"Failed to write status file: {exc}", exc_info=True)
 
 
 def log_session_summary(tickers):
@@ -432,12 +438,6 @@ if __name__ == "__main__":
                     system_logger.info(
                         f"Resumed {resumed_count} open trade(s) from saved state"
                     )
-                # Archive the state file now that we've loaded it
-                try:
-                    SESSION_STATE_FILE.unlink(missing_ok=True)
-                except Exception:
-                    pass
-
         for t in tickers:
             # each thread should first initialize the ticker, then start waiting for the signal from the data retriever
             t.start()
