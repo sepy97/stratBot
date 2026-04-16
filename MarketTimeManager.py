@@ -9,6 +9,7 @@ from alpaca_config import alpaca_config
 #import pytz
 from typing import List, Tuple, Dict, Any, cast
 import logging
+import warnings
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT
@@ -22,12 +23,17 @@ class MarketTimeManager:
         self.tz = ZoneInfo("America/New_York")
         
         #tz = pytz.timezone('America/New_York')
+        def normalize_calendar_time(dt: datetime) -> datetime:
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=self.tz)
+            return dt.astimezone(self.tz)
+
         calendar = cast(List[Calendar], self.trading_client.get_calendar())
         self.calendar = pd.DataFrame([
             {
                 'date': c.date,
-                'market_open': c.open.replace(tzinfo=self.tz),
-                'market_close': c.close.replace(tzinfo=self.tz)
+                'market_open': normalize_calendar_time(c.open),
+                'market_close': normalize_calendar_time(c.close)
             }
             for c in calendar
         ])
@@ -129,7 +135,16 @@ class MarketTimeManager:
             dt = datetime.fromtimestamp(dt, self.tz)
         else:
             if dt.tzinfo is None:
-                raise ValueError(f"isMarketOpen requires a timezone-aware datetime; received a naive datetime: {dt!r}. ")
+                warnings.warn(
+                    (
+                        "isMarketOpen received a timezone-naive datetime and assumes "
+                        "America/New_York. Pass a timezone-aware datetime or a POSIX timestamp "
+                        "to avoid ambiguity."
+                    ),
+                    RuntimeWarning,
+                    stacklevel=2
+                )
+                dt = dt.replace(tzinfo=self.tz)
             else:
                 dt = dt.astimezone(self.tz)
                 
