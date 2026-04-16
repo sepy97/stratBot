@@ -428,7 +428,7 @@ All trade records (both live and backtest) are written to the `Trades/` director
 
 ## Architecture
 
-See `docs/diagrams/` for rendered architecture diagrams.
+The architecture diagrams are included inline below.
 
 ### Live Trading
 
