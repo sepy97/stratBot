@@ -79,13 +79,11 @@ def _write_status(tickers, market_time_manager):
         has_market_day_window = market_day_close > market_day_open
         trades_closed_today = 0
         if has_market_day_window:
-            trades_closed_today = sum(
-                1
-                for t in tickers
-                for tr in t.trade_history
-                for exit_ts in [tr.data.get("exitTimestamp_sec")]
-                if exit_ts is not None and market_day_open <= exit_ts < market_day_close
-            )
+            for t in tickers:
+                for tr in t.trade_history:
+                    exit_ts = tr.data.get("exitTimestamp_sec")
+                    if exit_ts is not None and market_day_open <= exit_ts < market_day_close:
+                        trades_closed_today += 1
 
         status = {
             "pid": os.getpid(),
