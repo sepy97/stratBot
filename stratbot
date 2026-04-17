@@ -31,10 +31,12 @@ def _read_pid():
             # Stale PID — process no longer running
             PID_FILE.unlink(missing_ok=True)
 
-    # Fallback: find orphaned bot process via pgrep
+    # Fallback: find orphaned bot process via pgrep. Match the absolute
+    # BOT_SCRIPT path so we don't catch unrelated "Main.py" processes
+    # (e.g., another checkout of this repo).
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "python.*Main.py"],
+            ["pgrep", "-f", str(BOT_SCRIPT)],
             capture_output=True, text=True,
         )
         if result.returncode == 0:
@@ -42,6 +44,14 @@ def _read_pid():
             # Filter out this script's own PID and parent
             own = {os.getpid(), os.getppid()}
             pids = [p for p in pids if p not in own]
+            if len(pids) > 1:
+                # Refuse to guess which one is "the" bot.
+                print(
+                    f"Warning: multiple bot processes found ({pids}); "
+                    f"refusing to guess. Kill manually or remove {PID_FILE}.",
+                    file=sys.stderr,
+                )
+                return None
             if pids:
                 pid = pids[0]
                 try:
