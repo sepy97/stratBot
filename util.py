@@ -11,14 +11,15 @@
 from datetime import datetime
 #from dateutil.relativedelta import relativedelta
 
-import tomlkit
 from pathlib import Path
 
 from enum import Enum
 
-import pytz
 import os
 import secrets
+# tomlkit and pytz are imported lazily inside the functions that need them so
+# this module remains importable from the lightweight `stratbot` CLI (which
+# runs under system Python, not the venv).
 
 # dictionary where for each timeframe we have a tuple with (timeframe_LUT, period_type, frequency_type, frequency)
 # TODO: add yearly back into LUT
@@ -26,9 +27,12 @@ import secrets
 #timeframe_LUT = {'q': (91*24*60*60, "year", "monthly", 1), 'm': (30*24*60*60, "year", "monthly", 1), 'w': (7*24*60*60, "month", "weekly", 1), 'd': (24*60*60, "month", "daily", 1), 'm60': (60*60, "day", "minute", 30), 'm30': (30*60, "day", "minute", 30), 'm15': (15*60, "day", "minute", 15), 'm5': (5*60, "day", "minute", 5)}
 
 request_retry_num = 10
-# Shared runtime file locations for bot process and ticker workers.
+# Shared runtime file locations for bot process, ticker workers, and CLI.
 STRATBOT_DIR = Path.home() / ".stratbot"
 PAUSE_FLAG = STRATBOT_DIR / "pause.flag"
+PID_FILE = STRATBOT_DIR / "run.pid"
+STATUS_FILE = STRATBOT_DIR / "status.json"
+SESSION_STATE_FILE = STRATBOT_DIR / "session_state.json"
 
 class TickerStatus(Enum):
     OUT = 1
@@ -39,6 +43,7 @@ class TickerStatus(Enum):
 #dt_obj = datetime.fromtimestamp(timestamp)
 
 def loadSymbols():
+    import tomlkit
     symbols = []
 
     dic = tomlkit.loads(Path("config.toml").read_text())
@@ -50,10 +55,12 @@ def loadSymbols():
     return symbols
 
 def getLogPath():
+    import tomlkit
     dic = tomlkit.loads(Path("config.toml").read_text())
     return str(dic["paths"]["logs"])
 
 def getUsername():
+    import tomlkit
     config_path = Path("config.toml")
     dic = tomlkit.loads(config_path.read_text())
     if "user" in dic and "name" in dic["user"] and dic["user"]["name"]:
@@ -66,6 +73,8 @@ def getUsername():
     return username
 
 def moveLogs(destPath=None, tzone="America/Los_Angeles", log_dir=None):
+    import pytz
+    import tomlkit
     dt = datetime.now(tz=pytz.timezone(tzone))
     if log_dir is not None:
         parent = os.path.dirname(log_dir)  # .../sepy
@@ -83,6 +92,7 @@ def moveLogs(destPath=None, tzone="America/Los_Angeles", log_dir=None):
 
 
 def loadStrategies():
+    import tomlkit
     dic = tomlkit.loads(Path("config.toml").read_text())
     strategies = dic.get("strategies", [])
     return strategies

@@ -53,7 +53,6 @@ def scheduling(
 
 
 _bot_start_time = time.time()
-STATUS_FILE = Path.home() / ".stratbot" / "status.json"
 _last_status_write_error_time = 0.0
 
 
@@ -101,11 +100,11 @@ def _write_status(tickers, market_time_manager):
             ),
             "open_positions": open_positions,
         }
-        STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = str(STATUS_FILE) + ".tmp"
+        util.STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(util.STATUS_FILE) + ".tmp"
         with open(tmp, "w") as f:
             json.dump(status, f, indent=2)
-        os.replace(tmp, STATUS_FILE)
+        os.replace(tmp, util.STATUS_FILE)
     except Exception as exc:
         # Status write is best-effort, never crash the scheduler.
         # Rate-limit logs to avoid flooding if a persistent issue occurs.
@@ -194,8 +193,6 @@ def _refresh_candles(tickers, data_retriever):
 
 # ── State persistence ────────────────────────────────────────────────────────
 
-SESSION_STATE_FILE = Path.home() / ".stratbot" / "session_state.json"
-
 
 def _save_session(tickers):
     """Save active trades to JSON for resume on next startup.
@@ -219,11 +216,11 @@ def _save_session(tickers):
                     for tr in t.active_trades
                 ]
             }
-    SESSION_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = str(SESSION_STATE_FILE) + ".tmp"
+    util.SESSION_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(util.SESSION_STATE_FILE) + ".tmp"
     with open(tmp, "w") as f:
         json.dump(state, f, indent=2, default=str)
-    os.replace(tmp, SESSION_STATE_FILE)
+    os.replace(tmp, util.SESSION_STATE_FILE)
     system_logger.info(
         f"Session state saved: {sum(len(v['active_trades']) for v in state['tickers'].values())} trade(s)"
     )
@@ -231,10 +228,10 @@ def _save_session(tickers):
 
 def _load_session():
     """Load saved session state, or return None if no state file exists."""
-    if not SESSION_STATE_FILE.exists():
+    if not util.SESSION_STATE_FILE.exists():
         return None
     try:
-        with open(SESSION_STATE_FILE) as f:
+        with open(util.SESSION_STATE_FILE) as f:
             state = json.load(f)
         age_hours = (time.time() - state.get("saved_at", 0)) / 3600
         if age_hours > 24:
@@ -248,8 +245,6 @@ def _load_session():
 
 
 # ── Signal-based shutdown ─────────────────────────────────────────────────────
-
-STRATBOT_DIR = Path.home() / ".stratbot"
 
 _shutdown_event = threading.Event()
 _force_close = False  # True when SIGUSR1 (kill-switch) is received
@@ -291,7 +286,7 @@ if __name__ == "__main__":
             symbols = [s for s, v in saved["tickers"].items() if v.get("active_trades")]
             print(f"Terminate: {len(symbols)} symbol(s) with open trades: {symbols}")
             print("TODO: broker force-close not yet wired — delete state file only")
-        SESSION_STATE_FILE.unlink(missing_ok=True)
+        util.SESSION_STATE_FILE.unlink(missing_ok=True)
         print("Session state deleted.")
         raise SystemExit(0)
 
@@ -303,9 +298,8 @@ if __name__ == "__main__":
     signal.signal(signal.SIGUSR1, _handle_terminate)
 
     # Write PID file
-    STRATBOT_DIR.mkdir(parents=True, exist_ok=True)
-    pid_file = STRATBOT_DIR / "run.pid"
-    pid_file.write_text(str(os.getpid()))
+    util.STRATBOT_DIR.mkdir(parents=True, exist_ok=True)
+    util.PID_FILE.write_text(str(os.getpid()))
 
     # Set up unified logging, writing directly to the shared iCloud directory.
     # Archive any stale logs from a previous crashed session BEFORE
@@ -592,7 +586,7 @@ if __name__ == "__main__":
         if _force_close:
             # Delete state so next start is fresh
             try:
-                SESSION_STATE_FILE.unlink(missing_ok=True)
+                util.SESSION_STATE_FILE.unlink(missing_ok=True)
             except Exception:
                 pass
 
@@ -607,8 +601,8 @@ if __name__ == "__main__":
     finally:
         # Clean up PID and status files
         try:
-            pid_file.unlink(missing_ok=True)
-            STATUS_FILE.unlink(missing_ok=True)
+            util.PID_FILE.unlink(missing_ok=True)
+            util.STATUS_FILE.unlink(missing_ok=True)
         except Exception:
             pass
         log_functions.stop_logging_process(log_queue, log_proc)
