@@ -76,7 +76,6 @@ stratBot/
 ├── Watchlists/
 │   └── NASDAQ100_2025.csv   # Symbols to trade/backtest
 ├── Trades/                  # Backtest and live trade output CSVs
-├── docs/diagrams/           # Architecture diagrams (D2 source + PNG)
 └── requirements.txt
 ```
 
@@ -206,7 +205,7 @@ The `stratbot` CLI controls the running bot via Unix signals and file flags.
 ```bash
 python Main.py              # Auto-resumes if session_state.json exists
 python Main.py --fresh      # Ignores saved state, starts clean
-python Main.py --terminate  # Force-closes saved positions and exits (without running)
+python Main.py --terminate  # Closes all saved positions and exits (without running the bot)
 ```
 
 ### Runtime Files

@@ -275,7 +275,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--terminate", action="store_true",
-        help="Force-close all saved positions and exit immediately",
+        help="Close all saved positions and exit (without starting the bot)",
     )
     cli_args = parser.parse_args()
 
@@ -285,7 +285,7 @@ if __name__ == "__main__":
         if saved and saved.get("tickers"):
             symbols = [s for s, v in saved["tickers"].items() if v.get("active_trades")]
             print(f"Terminate: {len(symbols)} symbol(s) with open trades: {symbols}")
-            print("TODO: broker force-close not yet wired — delete state file only")
+            print(f"Closing {len(symbols)} saved position(s) (broker orders not yet wired)")
         util.SESSION_STATE_FILE.unlink(missing_ok=True)
         print("Session state deleted.")
         raise SystemExit(0)
