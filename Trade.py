@@ -31,6 +31,30 @@ class Trade:
         self._record_combos(chart, triggerPrice, direction)
         self._init_stop(chart, strategy)
 
+    # ── deserialization ────────────────────────────────────────────────────────
+
+    @classmethod
+    def from_dict(cls, data_dict, strategy):
+        """Reconstruct a Trade from a saved state dict.
+
+        Used on resume to re-populate Ticker.active_trades from
+        session_state.json.  Bypasses __init__ since we already have
+        the fully-populated data dict and don't need chart context.
+        """
+        trade = cls.__new__(cls)
+        trade.data = data_dict.copy()
+        trade.strategy = strategy
+        # Convert direction string back to enum if it was serialised
+        if isinstance(trade.data.get('direction'), str):
+            try:
+                trade.data['direction'] = util.TickerStatus[trade.data['direction']]
+            except KeyError as exc:
+                raise ValueError(
+                    f"invalid trade direction '{trade.data['direction']}' "
+                    f"for symbol '{trade.data.get('symbol', 'UNKNOWN')}'"
+                ) from exc
+        return trade
+
     # ── active trade management ───────────────────────────────────────────────
 
     def tighten_entry_stop(self, chart):
