@@ -36,9 +36,8 @@ class MarketTimeManager:
                 'market_close': normalize_calendar_time(c.close)
             }
             for c in calendar
-        ])
+        ]).set_index('date')
 
-        self.calendar.index = self.calendar['date']
         #self.calendar = pd.DataFrame([{'date': c.date, 'market_open': tz.localize(c.open), 'market_close': tz.localize(c.close)} for c in calendar])
         #if dateRange is None:
         #    self.calendar_cache = None
@@ -76,15 +75,19 @@ class MarketTimeManager:
     # Consider merging with isMarketOpen or at least reusing the code that checks if today is a trading day and gets market open time for today
     def getTodayOpenTime(self) -> int: 
         #nyse = mcal.get_calendar('NYSE')
-        today_date = datetime.now().date()
-        
+        today_date = datetime.now(self.tz).date()
+
+        # Outside the known calendar range
+        if today_date < self.calendar.index.min() or today_date > self.calendar.index.max():
+            raise RuntimeError(f"Today's date {today_date} is outside of the calendar range ({self.calendar.index.min()} to {self.calendar.index.max()})")
+
         # Not a trading day
         if today_date not in self.calendar.index:
             return -1
 
         row = self.calendar.loc[today_date]
 
-        return row['market_open'].timestamp()
+        return int(row['market_open'].timestamp())
         for _ in range(7):
             todayDataFrame = nyse.schedule(str(check_date), str(check_date))
             if not todayDataFrame.empty:
@@ -250,22 +253,37 @@ class MarketTimeManager:
         nextCandleStartTimeStamp_s = int(scheduleNextPeriod.iloc[0]['market_open'].timestamp())
         return candleEndTimeStamp_s, nextCandleStartTimeStamp_s
 
-    # Detect if there is a flip of the timeframe. Note: returns False if today is not a trading day (does not log error in this case)
-    # Assumes that the check is performed once per time_quant period
+    # Detect if there is a flip of the timeframe. 
+    # Note: returns False if today is not a trading day or market is closed (does not log error in this case)
+    # Normal use case is to perform the check once per time_quant period
     def detectTFFlip(self, current_time: datetime, TFperiod: int, time_quant: int) -> bool:
         #opening_time = getOpenCloseAtDay(int(current_time.timestamp()))["open"]
-        opening_timestamp = self.getTodayOpenTime() 
-        if opening_timestamp == -1:  # today is not a trading day or trading is closed, return false
-            return False
-        current_timestamp = int(current_time.timestamp())
-        delta = current_timestamp - opening_timestamp
-        modulo = delta % TFperiod
-        if modulo < time_quant:
-            return True
+        if self.isMarketOpen(current_time):
+            opening_timestamp = self.getTodayOpenTime() # This will always return valid open timestamp since we confirmed that market is open at current_time
+            current_timestamp = int(current_time.timestamp())
+            delta = current_timestamp - opening_timestamp
+            modulo = delta % TFperiod
+            if modulo < time_quant:
+                return True
         return False
 
-    # Get the proper start time for the first candle to be included in the pattern detection based on the current time and timeframe. For example, if we are detecting a pattern on m15 timeframe and current time is 10:07, then the proper start time should be 10:15, since the first candle to be included in the pattern detection should be the one that starts at 10:15 and ends at 10:29:59. If current time is 10:14, then the proper start time should be 10:00, since the first candle to be included in the pattern detection should be the one that starts at 10:00 and ends at 10:14:59. For daily timeframe, if current time is during trading hours, then proper start time should be today market open time, if current time is after market close then proper start time should be tomorrow market open time, if current time is before market open then proper start time should be today market open time
+    # Get the proper start time for the first candle to be included in the pattern detection based on the current time and timeframe. Proper start time is never before the current time. 
+    # For example, if we are detecting a pattern on m15 timeframe and current time is 10:07, then the proper start time should be 10:15, and the first candle to be included in the pattern detection should be the one that starts at 10:15 and ends at 10:29:59. 
+    # If current time is 10:14, then the proper start time should be 10:15:00, and the first candle to be included in the pattern detection should be the one that starts at 10:00:00 and ends at 10:14:59. 
+    # For daily timeframe, if current time is during trading hours of after market close, then proper start time should be next trading day market open time; if current time is on the trading day before market open then proper start time should be today market open time    
+    #       time_quant in seconds
+    #       if current_time is timezone naive, NY timezone is assumed
     def getProperStartTime(self, current_time: datetime, time_quant: int) -> datetime:
+        if current_time.tzinfo is None:
+            warnings.warn(
+                (
+                    "getProperStartTime received a timezone-naive datetime and assumes "
+                    "America/New_York. Pass a timezone-aware datetime to avoid ambiguity."
+                ),
+                RuntimeWarning,
+                stacklevel=2
+            )
+            current_time = current_time.replace(tzinfo=self.tz)
         timestamp_now = int(current_time.timestamp())
         daily_candle_list = self.getCandleOpenCloseTime(timestamp_s=timestamp_now, timeframe_sym="d", n_pre=0, n_post=1, tz='America/New_York')
         today_candle = daily_candle_list['current']
@@ -614,8 +632,8 @@ if __name__ == "__main__":
     else:
         print('It is ' + current_time.strftime('%Y-%m-%d %H:%M:%S %Z') + ' and the market is closed.')
    
-    proper_start_time = mtm.getProperStartTime(datetime.now(), 5)
-    print('Time now: ' + (datetime.now()).strftime('%Y-%m-%d %H:%M:%S %Z') + ". Proper start time: " + proper_start_time.strftime('%Y-%m-%d %H:%M:%S %Z'))
+    proper_start_time = mtm.getProperStartTime(datetime.now(mtm.tz), 5)
+    print('Time now: ' + (datetime.now(mtm.tz)).strftime('%Y-%m-%d %H:%M:%S %Z') + ". Proper start time: " + proper_start_time.strftime('%Y-%m-%d %H:%M:%S %Z'))
 
     proper_start_time = mtm.getProperStartTime(timestamp_dt.to_pydatetime(), 5)
     print('At time ' + timestamp_dt.strftime('%Y-%m-%d %H:%M:%S %Z') + " - proper start time: " + proper_start_time.strftime('%Y-%m-%d %H:%M:%S %Z'))
