@@ -60,6 +60,14 @@ def getLogPath():
     dic = tomlkit.loads(Path("config.toml").read_text())
     return str(dic["paths"]["logs"])
 
+def getLogDir():
+    """Directory the running bot writes its logs to: <paths.logs>/<user>/current.
+
+    Shared by Main.py and the stratbot CLI so both agree on the location.
+    Reads config.toml relative to the current working directory.
+    """
+    return os.path.join(getLogPath(), getUsername(), "current")
+
 def getUsername():
     import tomlkit
     config_path = Path("config.toml")

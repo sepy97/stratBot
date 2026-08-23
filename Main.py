@@ -43,6 +43,8 @@ def scheduling(
             current_time, mtm.timeframe_LUT[t][0], time_quant
         ):
             TF[t] = True
+            _last_tf_flip["tf"] = t
+            _last_tf_flip["timestamp"] = int(current_time.timestamp())
             market_logger.info(f"TF {t} flipped @ {current_time}")
     with TF_condition:
         TF_condition.notify_all()
@@ -54,6 +56,25 @@ def scheduling(
 
 _bot_start_time = time.time()
 _last_status_write_error_time = 0.0
+_last_tf_flip = {"tf": None, "timestamp": None}  # updated by scheduling() on each flip
+_log_dir = None  # set in __main__ once the log directory is known; surfaced via status.json
+
+
+def _next_market_open_from_calendar(market_time_manager, now_ts):
+    """Timestamp (s) of the first market open strictly after now_ts, or None.
+
+    Uses the in-memory Alpaca calendar DataFrame, so it is cheap enough to call
+    on every 5s status tick (unlike _get_next_market_open, which walks day by day).
+    """
+    try:
+        cal = market_time_manager.calendar
+        now_pd = pd.Timestamp(now_ts, unit="s", tz="UTC").tz_convert(market_time_manager.tz)
+        upcoming = cal.loc[cal["market_open"] > now_pd, "market_open"]
+        if len(upcoming) == 0:
+            return None
+        return int(upcoming.iloc[0].timestamp())
+    except Exception:
+        return None
 
 
 def _write_status(tickers, market_time_manager):
@@ -99,6 +120,10 @@ def _write_status(tickers, market_time_manager):
                 2,
             ),
             "open_positions": open_positions,
+            # Liveness/diagnostic fields consumed by `stratbot status` / `stratbot logs`
+            "last_tf_flip": dict(_last_tf_flip),
+            "next_open": _next_market_open_from_calendar(market_time_manager, now_ts),
+            "log_dir": _log_dir,
         }
         util.STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = str(util.STATUS_FILE) + ".tmp"
@@ -300,7 +325,8 @@ if __name__ == "__main__":
     # Set up unified logging, writing directly to the shared iCloud directory.
     # Archive any stale logs from a previous crashed session BEFORE
     # starting the new logging process (Option C: mode='a' + fresh dir).
-    log_dir = os.path.join(util.getLogPath(), util.getUsername(), "current")
+    log_dir = util.getLogDir()
+    _log_dir = log_dir
     os.makedirs(log_dir, exist_ok=True)
     try:
         util.moveLogs(log_dir=log_dir)
