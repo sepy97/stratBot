@@ -32,7 +32,7 @@ def scheduling(
     symbols, DR_queue, DR_condition, TF, TF_condition, market_time_manager,
     tickers=None, time_quant=5,
 ):
-    current_time = datetime.now()
+    current_time = datetime.now(market_time_manager.tz)
     DR_queue.put(symbols)
     with DR_condition:
         DR_condition.notify()
@@ -451,7 +451,7 @@ if __name__ == "__main__":
         # create global APScheduler and schedule data retrieval (by function that adds signal to the queue) every 5 seconds
         scheduler = BackgroundScheduler()
         proper_start_time = market_time_manager.getProperStartTime(
-            datetime.now(), time_quant
+            datetime.now(market_time_manager.tz), time_quant
         )
         system_logger.info(f"Proper start time: {proper_start_time}")
         system_logger.info(
