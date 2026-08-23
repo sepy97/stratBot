@@ -170,7 +170,10 @@ The `stratbot` CLI controls the running bot via Unix signals and file flags.
 ./stratbot status            # Show open positions, P&L, uptime, market status
 ./stratbot pause             # Stop new entries, keep managing open trades
 ./stratbot resume            # Resume new entries after pause
+./stratbot logs [-f] [-n N]  # Tail the bot's log (--file app|trades|events|out, --ticker SYM)
 ```
+
+`status` exits with `0` when the bot is running, `1` when it is not, and `2` when it is running but `status.json` is more than 15 s old — so it can be used as a health check from scripts, cron, or systemd.
 
 ### How It Works
 
@@ -182,6 +185,7 @@ The `stratbot` CLI controls the running bot via Unix signals and file flags.
 | `status` | Reads `~/.stratbot/status.json` (updated every 5s by the bot) |
 | `pause` | Creates `~/.stratbot/pause.flag`; bot skips new entries but keeps managing open trades |
 | `resume` | Removes the pause flag file |
+| `logs` | Tails a file from the bot's log directory (taken from `status.json` while running, otherwise derived from `config.toml`; falls back to the most recent archived run). `--file out` shows the process stdout/stderr captured by `start` |
 
 ### Status Output
 
@@ -189,6 +193,9 @@ The `stratbot` CLI controls the running bot via Unix signals and file flags.
   State     : running
   Uptime    : 2h 47m
   Market    : OPEN
+  Last tick : 2026-08-21 12:17:05  (3s ago)
+  Last flip : m15 @ 2026-08-21 12:15:00  (2m 05s ago)
+  Next open : 2026-08-24 09:30:00  (in 2d 21h)
   Tickers   : 98
   Open      : 3 trade(s)
   Closed    : 12 today
@@ -198,6 +205,7 @@ The `stratbot` CLI controls the running bot via Unix signals and file flags.
     AAPL    LONG   entry $150.25  day 1  BasicDailyAS
     MSFT    SHORT  entry $380.00  day 0  BasicDailyAS
     NVDA    LONG   entry $820.50  day 2  StratLab2dGM
+  Logs      : /path/to/logs/<user>/current
 ```
 
 ### Startup Flags

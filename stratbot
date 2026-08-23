@@ -22,6 +22,12 @@ CREDENTIALS_FILE = PROJECT_ROOT / "alpaca_config.py"
 MIN_PYTHON = (3, 12)      # requirements.txt: "Python >= 3.12"
 START_TIMEOUT_S = 15      # how long `start` waits for Main.py to write its PID file
 START_GRACE_S = 3         # after the PID file appears, keep watching this long for an early exit
+STATUS_STALE_S = 15       # status.json older than this → bot considered unresponsive
+LOG_FILES = {             # `stratbot logs --file X` → file inside the bot's log dir
+    "app": "live_trading.log",    # everything (system, market, broker, ticker summaries)
+    "trades": "trades.log",       # trade entries/exits only
+    "events": "events.jsonl",     # structured audit ledger
+}
 VENV_HINT = (
     "Create the project venv with:\n"
     "    uv venv venv -p 3.13 && uv pip install -p venv/bin/python -r requirements.txt\n"
@@ -256,26 +262,108 @@ def cmd_kill(args):
     return 0
 
 
+def _fmt_ts(ts):
+    """Epoch seconds → 'YYYY-MM-DD HH:MM:SS' in local time ('n/a' if None)."""
+    if not ts:
+        return "n/a"
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
+def _fmt_age(seconds):
+    """Seconds → compact '3s' / '4m 12s' / '1h 03m' / '1d 8h'."""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    if seconds < 86400:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+    return f"{seconds // 86400}d {(seconds % 86400) // 3600}h"
+
+
+def _read_status():
+    """Parse status.json, or None if it is missing/corrupt."""
+    try:
+        return json.loads(STATUS_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _latest_archived_log_dir(parent):
+    """After a graceful stop the bot renames <parent>/current to
+    <parent>/YYYY-MM-DD/HH.MM.SS. Return the newest such dir, or None."""
+    try:
+        days = sorted(d for d in Path(parent).iterdir()
+                      if d.is_dir() and len(d.name) == 10 and d.name[4] == "-")
+        for day in reversed(days):
+            runs = sorted(r for r in day.iterdir() if r.is_dir())
+            if runs:
+                return runs[-1]
+    except OSError:
+        pass
+    return None
+
+
+def _find_log_dir():
+    """Locate the bot's log directory.
+
+    1. `log_dir` from status.json (authoritative while the bot is running).
+    2. Otherwise derive it from config.toml the same way Main.py does.
+    3. If <...>/current doesn't exist (bot stopped → logs archived), fall back
+       to the most recent archived run.
+    Returns (path or None, error message or None).
+    """
+    status = _read_status()
+    log_dir = (status or {}).get("log_dir")
+    if not log_dir:
+        cwd = os.getcwd()
+        try:
+            os.chdir(PROJECT_ROOT)  # util reads config.toml relative to cwd
+            from util import getLogDir
+            log_dir = getLogDir()
+        except ImportError as e:
+            return None, (f"Cannot derive log dir from config.toml ({e}). "
+                          f"Run the CLI with venv/bin/python, or start the bot so it "
+                          f"records log_dir in {STATUS_FILE}.")
+        except Exception as e:
+            return None, f"Cannot derive log dir from config.toml: {e}"
+        finally:
+            os.chdir(cwd)
+    log_dir = Path(log_dir)
+    if log_dir.is_dir():
+        return log_dir, None
+    archived = _latest_archived_log_dir(log_dir.parent)
+    if archived:
+        return archived, None
+    return None, f"Log directory {log_dir} does not exist and no archived runs found in {log_dir.parent}"
+
+
 def cmd_status(args):
+    """Exit code: 0 = running, 1 = not running, 2 = running but status is stale."""
     pid = _read_pid()
 
     if not STATUS_FILE.exists():
         if pid:
             print(f"stratbot running (PID {pid}) but no status file yet")
-        else:
-            print("stratbot is not running")
-        return 0
+            return 0
+        print("stratbot is not running")
+        return 1
 
     # Cross-check: status file exists but no live process → stale data
     if not pid:
         STATUS_FILE.unlink(missing_ok=True)
         print("stratbot is not running")
-        return 0
+        return 1
 
-    status = json.loads(STATUS_FILE.read_text())
-    age = time.time() - status.get("timestamp", 0)
+    status = _read_status()
+    if status is None:
+        print(f"stratbot running (PID {pid}) but {STATUS_FILE} is unreadable")
+        return 2
 
-    if age > 15:
+    now = time.time()
+    age = now - status.get("timestamp", 0)
+    stale = age > STATUS_STALE_S
+    if stale:
         print(f"WARNING: status is {age:.0f}s stale — bot may be unresponsive\n")
 
     uptime = status.get("uptime_seconds", 0)
@@ -283,10 +371,25 @@ def cmd_status(args):
     print(f"  State     : {status.get('state', '?')}")
     print(f"  Uptime    : {h}h {m}m")
     print(f"  Market    : {'OPEN' if status.get('market_open') else 'CLOSED'}")
+    print(f"  Last tick : {_fmt_ts(status.get('timestamp'))}  ({_fmt_age(age)} ago)")
+
+    flip = status.get("last_tf_flip") or {}
+    if flip.get("timestamp"):
+        print(f"  Last flip : {flip.get('tf')} @ {_fmt_ts(flip['timestamp'])}  "
+              f"({_fmt_age(now - flip['timestamp'])} ago)")
+    else:
+        print("  Last flip : none this session")
+
+    next_open = status.get("next_open")
+    if next_open:
+        print(f"  Next open : {_fmt_ts(next_open)}  (in {_fmt_age(max(0, next_open - now))})")
+
     print(f"  Tickers   : {status.get('tickers_active', '?')}")
     print(f"  Open      : {status.get('trades_open', 0)} trade(s)")
     print(f"  Closed    : {status.get('trades_closed_today', 0)} today")
     print(f"  P&L       : ${status.get('realized_pnl', 0):.2f}")
+    if status.get("log_dir"):
+        print(f"  Logs      : {status['log_dir']}")
 
     positions = status.get("open_positions", [])
     if positions:
@@ -297,7 +400,7 @@ def cmd_status(args):
                 f"entry ${p['entry']:.2f}  day {p['days_open']}  "
                 f"{p.get('strategy', '')}"
             )
-    return 0
+    return 2 if stale else 0
 
 
 def cmd_pause(args):
@@ -322,8 +425,48 @@ def cmd_resume(args):
         return 0
 
     PAUSE_FLAG.unlink()
-    print("Resumed — new entries enabled.")
+    if _read_pid():
+        print("Resumed — new entries enabled.")
+    else:
+        print("Removed stale pause flag (stratbot is not running).")
     return 0
+
+
+def cmd_logs(args):
+    """Print the tail of a bot log file, optionally following it."""
+    if args.file == "out":
+        path = BOT_OUTPUT_FILE
+    else:
+        log_dir, err = _find_log_dir()
+        if err:
+            print(err, file=sys.stderr)
+            return 1
+        if args.ticker:
+            path = log_dir / "tickers" / f"strat_{args.ticker.upper()}.log"
+        else:
+            path = log_dir / LOG_FILES[args.file]
+
+    if not path.exists():
+        print(f"No such log file: {path}", file=sys.stderr)
+        return 1
+
+    print(f"==> {path} <==", file=sys.stderr)
+    try:
+        with open(path, "r", errors="replace") as f:
+            for line in _tail(path, args.lines):
+                print(line)
+            if not args.follow:
+                return 0
+            f.seek(0, os.SEEK_END)
+            while True:
+                line = f.readline()
+                if line:
+                    print(line, end="", flush=True)
+                else:
+                    time.sleep(0.5)
+    except KeyboardInterrupt:
+        print()
+        return 0
 
 
 def main():
@@ -338,9 +481,17 @@ def main():
 
     subs.add_parser("stop", help="Graceful exit — save state, keep positions")
     subs.add_parser("kill", help="Force-close all positions and exit")
-    subs.add_parser("status", help="Show bot status and open positions")
+    subs.add_parser("status", help="Show bot status and open positions "
+                                   "(exit 0 running, 1 not running, 2 stale)")
     subs.add_parser("pause", help="Stop new entries, keep managing open trades")
     subs.add_parser("resume", help="Resume new entries after pause")
+
+    p_logs = subs.add_parser("logs", help="Tail the bot's log files")
+    p_logs.add_argument("-f", "--follow", action="store_true", help="Keep printing new lines (Ctrl-C to stop)")
+    p_logs.add_argument("-n", "--lines", type=int, default=50, help="Number of trailing lines (default 50)")
+    p_logs.add_argument("--file", choices=[*LOG_FILES, "out"], default="app",
+                        help="Which log: app (default), trades, events, or out (stdout/stderr from `stratbot start`)")
+    p_logs.add_argument("--ticker", metavar="SYM", help="Per-ticker log (tickers/strat_SYM.log) instead of --file")
 
     args = parser.parse_args()
     if not args.command:
@@ -354,6 +505,7 @@ def main():
         "status": cmd_status,
         "pause": cmd_pause,
         "resume": cmd_resume,
+        "logs": cmd_logs,
     }[args.command]
 
     return handler(args)
