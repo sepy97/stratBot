@@ -297,10 +297,6 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, _handle_graceful)
     signal.signal(signal.SIGUSR1, _handle_terminate)
 
-    # Write PID file
-    util.STRATBOT_DIR.mkdir(parents=True, exist_ok=True)
-    util.PID_FILE.write_text(str(os.getpid()))
-
     # Set up unified logging, writing directly to the shared iCloud directory.
     # Archive any stale logs from a previous crashed session BEFORE
     # starting the new logging process (Option C: mode='a' + fresh dir).
@@ -325,6 +321,13 @@ if __name__ == "__main__":
         )
 
     threading.excepthook = _thread_excepthook
+
+    # Write the PID file only now: everything above can raise (e.g. the log
+    # directory being unwritable) and runs outside the try/finally below that
+    # removes the file, so writing earlier left a stale PID on crash and made
+    # `stratbot start` report success for a process that was already dead.
+    util.STRATBOT_DIR.mkdir(parents=True, exist_ok=True)
+    util.PID_FILE.write_text(str(os.getpid()))
 
     try:
         # load watchlist from csv (same file used by backtester)
