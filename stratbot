@@ -14,10 +14,70 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # Import shared runtime paths from util. Ensures CLI and bot agree on file
 # locations even if STRATBOT_DIR ever moves (e.g., to XDG_RUNTIME_DIR).
 sys.path.insert(0, str(PROJECT_ROOT))
-from util import STRATBOT_DIR, PAUSE_FLAG, PID_FILE, STATUS_FILE
+from util import STRATBOT_DIR, PAUSE_FLAG, PID_FILE, STATUS_FILE, BOT_OUTPUT_FILE
 
 BOT_SCRIPT = PROJECT_ROOT / "Main.py"
 VENV_PYTHON = PROJECT_ROOT / "venv" / "bin" / "python"
+CREDENTIALS_FILE = PROJECT_ROOT / "alpaca_config.py"
+MIN_PYTHON = (3, 12)      # requirements.txt: "Python >= 3.12"
+START_TIMEOUT_S = 15      # how long `start` waits for Main.py to write its PID file
+START_GRACE_S = 3         # after the PID file appears, keep watching this long for an early exit
+VENV_HINT = (
+    "Create the project venv with:\n"
+    "    uv venv venv -p 3.13 && uv pip install -p venv/bin/python -r requirements.txt\n"
+    "or: python3.13 -m venv venv && venv/bin/pip install -r requirements.txt"
+)
+
+
+def _python_version(python):
+    """Return (major, minor) of the given interpreter, or None if it can't be run."""
+    try:
+        result = subprocess.run(
+            [python, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            major, minor = result.stdout.split()
+            return int(major), int(minor)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _resolve_python():
+    """Pick the interpreter for Main.py; refuse anything older than MIN_PYTHON.
+
+    Prefers venv/bin/python. Falls back to the interpreter running this CLI
+    (usually the system python3) only if it is new enough — otherwise the bot
+    would die on import and, before this check, the CLI would still report
+    "started".
+    """
+    if VENV_PYTHON.exists():
+        python, label = str(VENV_PYTHON), "venv/bin/python"
+    else:
+        python, label = sys.executable, sys.executable
+        print(f"Warning: {PROJECT_ROOT / 'venv'} not found; trying {sys.executable}",
+              file=sys.stderr)
+
+    version = _python_version(python)
+    if version is None:
+        print(f"Error: cannot run {label}", file=sys.stderr)
+        print(VENV_HINT, file=sys.stderr)
+        return None
+    if version < MIN_PYTHON:
+        print(f"Error: {label} is Python {version[0]}.{version[1]}; "
+              f"stratBot needs >= {MIN_PYTHON[0]}.{MIN_PYTHON[1]}.", file=sys.stderr)
+        print(VENV_HINT, file=sys.stderr)
+        return None
+    return python
+
+
+def _tail(path, n=20):
+    """Last n lines of a text file (empty list if unreadable)."""
+    try:
+        return path.read_text(errors="replace").splitlines()[-n:]
+    except OSError:
+        return []
 
 
 def _read_pid():
@@ -74,20 +134,71 @@ def cmd_start(args):
         print(f"stratbot already running (PID {pid})")
         return 1
 
-    python = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
+    # Pre-flight: fail fast with a useful message instead of letting Main.py
+    # die silently on import.
+    if not CREDENTIALS_FILE.exists():
+        print(f"Error: {CREDENTIALS_FILE} not found.", file=sys.stderr)
+        print("Create it with your Alpaca credentials (it is gitignored):\n"
+              "    alpaca_config = {'key': 'PK...', 'secret_key': '...'}",
+              file=sys.stderr)
+        return 1
+    python = _resolve_python()
+    if python is None:
+        return 1
+
     cmd = [python, str(BOT_SCRIPT)]
     if args.fresh:
         cmd.append("--fresh")
 
-    proc = subprocess.Popen(
-        cmd,
-        start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    print(f"stratbot started (PID {proc.pid})")
-    print("Check status:  stratbot status")
-    print("Graceful stop: stratbot stop")
+    # Bot output goes to a file (not DEVNULL) so a crash is diagnosable.
+    STRATBOT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(BOT_OUTPUT_FILE, "a") as out:
+        out.write(f"\n===== stratbot start {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                  f"| {' '.join(cmd)} =====\n")
+        out.flush()
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(PROJECT_ROOT),   # Main.py reads config.toml relative to cwd
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+        )
+
+    # Wait until the bot either writes its PID file (healthy) or exits (failed).
+    # Once the PID file appears, keep watching for START_GRACE_S more seconds:
+    # an init failure right after the PID write would otherwise still look
+    # like a successful start.
+    deadline = time.time() + START_TIMEOUT_S
+    pid_seen_at = None
+    while True:
+        rc = proc.poll()
+        if rc is not None:
+            print(f"stratbot failed to start (exit code {rc}). "
+                  f"Last output from {BOT_OUTPUT_FILE}:", file=sys.stderr)
+            for line in _tail(BOT_OUTPUT_FILE):
+                print("  " + line, file=sys.stderr)
+            return 1
+        now = time.time()
+        if pid_seen_at is None and PID_FILE.exists():
+            try:
+                if int(PID_FILE.read_text().strip()) == proc.pid:
+                    pid_seen_at = now
+            except ValueError:
+                pass  # partially written; retry
+        if pid_seen_at is not None and now - pid_seen_at >= START_GRACE_S:
+            print(f"stratbot started (PID {proc.pid})")
+            print(f"Bot output:    {BOT_OUTPUT_FILE}")
+            print("Check status:  stratbot status")
+            print("Graceful stop: stratbot stop")
+            return 0
+        if pid_seen_at is None and now >= deadline:
+            break
+        time.sleep(0.25)
+
+    print(f"stratbot launched (PID {proc.pid}) but has not written {PID_FILE} "
+          f"after {START_TIMEOUT_S}s — it may still be importing.")
+    print(f"Check:  stratbot status   |   tail -f {BOT_OUTPUT_FILE}")
     return 0
 
 

@@ -32,6 +32,7 @@ STRATBOT_DIR = Path.home() / ".stratbot"
 PAUSE_FLAG = STRATBOT_DIR / "pause.flag"
 PID_FILE = STRATBOT_DIR / "run.pid"
 STATUS_FILE = STRATBOT_DIR / "status.json"
+BOT_OUTPUT_FILE = STRATBOT_DIR / "stratbot.out"  # stdout/stderr of Main.py when launched via the CLI
 SESSION_STATE_FILE = STRATBOT_DIR / "session_state.json"
 
 class TickerStatus(Enum):

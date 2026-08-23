@@ -176,7 +176,7 @@ The `stratbot` CLI controls the running bot via Unix signals and file flags.
 
 | Command | Mechanism |
 |---------|-----------|
-| `start` | Spawns `Main.py` via project venv Python in background, writes PID to `~/.stratbot/run.pid` |
+| `start` | Checks `alpaca_config.py` exists and `venv/bin/python` is ≥3.12, spawns `Main.py` in background with output to `~/.stratbot/stratbot.out`, then waits for `~/.stratbot/run.pid` (or reports the crash with the last lines of output) |
 | `stop` | Sends SIGTERM to bot process; bot saves state and exits gracefully |
 | `kill` | Sends SIGUSR1 to bot process; bot force-closes all positions and exits |
 | `status` | Reads `~/.stratbot/status.json` (updated every 5s by the bot) |
@@ -213,6 +213,7 @@ python Main.py --terminate  # Closes all saved positions and exits (without runn
 ```
 ~/.stratbot/
 ├── run.pid              # Bot process ID (deleted on clean exit)
+├── stratbot.out         # stdout/stderr of Main.py when launched via `stratbot start` (appended per start)
 ├── status.json          # Live status (updated every 5s by the bot)
 ├── pause.flag           # Exists = paused (no new entries, open trades managed)
 └── session_state.json   # Active trades snapshot (written on graceful stop + every 5min)
